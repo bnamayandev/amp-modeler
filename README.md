@@ -94,6 +94,11 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
+Windows: to get ASIO in the standalone's audio settings, download the
+[Steinberg ASIO SDK](https://www.steinberg.net/asiosdk), unpack it and add
+`-DEVIL_ASIO_SDK_DIR=C:/path/to/asiosdk` to the configure command. The SDK is not bundled
+or downloaded for you, and the released Windows builds do not include ASIO.
+
 Outputs land in `build/EvilAmplifier_artefacts/Release/{VST3,AU,Standalone}/`. Add
 `-DEVIL_COPY_PLUGIN_AFTER_BUILD=ON` to install into your user plugin folders on every build.
 On macOS add `"-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"` for a universal binary. Always build

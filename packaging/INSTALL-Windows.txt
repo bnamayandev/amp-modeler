@@ -10,8 +10,9 @@ Two ways to use it. You need Windows 10 or 11 (64-bit).
    - A yellow banner says the input is muted (to avoid feedback through speakers).
      Click "Settings..." and set:
        Audio device type:  Windows Audio (Low Latency Mode), or
-                           Windows Audio (Exclusive Mode) for the lowest latency
-                           (the standalone has no ASIO; for ASIO use a DAW, option 2)
+                           Windows Audio (Exclusive Mode) for the lowest latency, or
+                           ASIO if listed (only in builds made with the ASIO SDK;
+                           otherwise use ASIO from a DAW, option 2)
        Output / Input:     your audio interface
        Sample rate:        48000 Hz
        Audio buffer size:  128 samples (go up to 256 if you hear crackles)

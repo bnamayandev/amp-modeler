@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PLUGINVAL_VERSION: v1.0.4
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-24.04
+            pluginval_zip: pluginval_Linux.zip
+            pluginval: ./pluginval
+            exe: ""
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release
+          - name: macOS
+            os: macos-14
+            pluginval_zip: pluginval_macOS.zip
+            pluginval: ./pluginval.app/Contents/MacOS/pluginval
+            exe: ""
+            # Universal binary; copy the AU into ~/Library so auval/pluginval can find it.
+            configure: -G Ninja -DCMAKE_BUILD_TYPE=Release "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DEVIL_COPY_PLUGIN_AFTER_BUILD=ON
+          - name: Windows
+            os: windows-2022
+            pluginval_zip: pluginval_Windows.zip
+            pluginval: ./pluginval.exe
+            exe: .exe
+            configure: -G "Visual Studio 17 2022" -A x64
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build xvfb libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev \
+            libxrender-dev libgl1-mesa-dev libjack-jackd2-dev
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Configure
+        shell: bash
+        run: cmake -S . -B build ${{ matrix.configure }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Unit tests
+        shell: bash
+        run: |
+          tests="build/tests/evil_tests_artefacts/Release/evil_tests${{ matrix.exe }}"
+          # [cpu] timing assertions are skipped: shared CI runners are too noisy to gate on.
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "$tests" "~[cpu]"; else "$tests" "~[cpu]"; fi
+
+      - name: CPU benchmark (reported, not gating)
+        shell: bash
+        run: |
+          cli="build/evil-cli_artefacts/Release/evil-cli${{ matrix.exe }}"
+          "$cli" bench --seconds 60 --block 128 --rate 48000
+          "$cli" bench --seconds 60 --block 128 --rate 44100
+
+      - name: pluginval (strictness 10)
+        shell: bash
+        run: |
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/${PLUGINVAL_VERSION}/${{ matrix.pluginval_zip }}"
+          unzip -q pluginval.zip
+          run() { if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "$@"; else "$@"; fi; }
+          run ${{ matrix.pluginval }} --strictness-level 10 --validate-in-process \
+            "build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            killall -9 AudioComponentRegistrar 2>/dev/null || true
+            run ${{ matrix.pluginval }} --strictness-level 10 --validate-in-process \
+              "$HOME/Library/Audio/Plug-Ins/Components/Evil Amplifier.component"
+          fi
+
+      - name: GUI snapshot
+        shell: bash
+        run: |
+          snap="build/evil-snapshot_artefacts/Release/evil-snapshot${{ matrix.exe }}"
+          if [ "$RUNNER_OS" = "Linux" ]; then xvfb-run -a "$snap" screenshots; else "$snap" screenshots; fi
+
+      - name: Package
+        shell: bash
+        run: |
+          pkg="EvilAmplifier-${RUNNER_OS}"
+          mkdir -p "$pkg"
+          cp -R "build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3" "$pkg/"
+          cp -R build/EvilAmplifier_artefacts/Release/Standalone/* "$pkg/"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            cp -R "build/EvilAmplifier_artefacts/Release/AU/Evil Amplifier.component" "$pkg/"
+          fi
+          cp "packaging/INSTALL-${RUNNER_OS}.txt" "$pkg/INSTALL.txt"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            # The standalone is self-contained (model and IR embedded): also offer it on its own.
+            cp "build/EvilAmplifier_artefacts/Release/Standalone/Evil Amplifier.exe" EvilAmplifier.exe
+          fi
+          cp LICENSES.md "$pkg/"
+          # Zip here, on the build OS, so executable bits and macOS bundles survive.
+          case "$RUNNER_OS" in
+            macOS)   ditto -c -k --sequesterRsrc --keepParent "$pkg" "$pkg.zip" ;;
+            Windows) 7z a -tzip "$pkg.zip" "$pkg" > /dev/null ;;
+            *)       zip -qry "$pkg.zip" "$pkg" ;;
+          esac
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: EvilAmplifier-${{ runner.os }}
+          path: |
+            EvilAmplifier-${{ runner.os }}.zip
+            EvilAmplifier.exe
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: screenshots-${{ runner.os }}
+          path: screenshots
+
+  # Push a tag like v0.1.0 to publish the three zips as a public GitHub release.
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build, training]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: EvilAmplifier-*
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            EvilAmplifier-*.zip
+            EvilAmplifier.exe
+          generate_release_notes: true
+
+  training:
+    name: Training pipeline smoke test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (CPU PyTorch)
+        working-directory: training
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements.txt
+      - name: Capture signal -> simulated device -> train -> export
+        working-directory: training
+        run: |
+          python -m evilamp.capture_signal /tmp/cap --train-seconds 30
+          python - <<'EOF'
+          import numpy as np
+          from evilamp import audio
+          x, r = audio.load_mono("/tmp/cap/capture_input.wav")
+          y = np.concatenate([np.zeros(23), 0.5 * np.tanh(6 * x)])[: len(x)]
+          audio.write_wav("/tmp/cap/recorded.wav", y, r, subtype="PCM_24")
+          EOF
+          python -m evilamp.train --capture-meta /tmp/cap/capture.json --capture-output /tmp/cap/recorded.wav \
+            --delay auto --arch nano --epochs 2 --out /tmp/cap/smoke.nam | tee train.log
+          grep -q "Latency from blips: \[23, 23, 23, 23\]" train.log
+          python -m evilamp.golden /tmp/golden

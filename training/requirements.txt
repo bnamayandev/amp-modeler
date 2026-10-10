@@ -1,0 +1,6 @@
+# Offline training pipeline. Install PyTorch with CUDA from https://pytorch.org if you have
+# an NVIDIA GPU; the CPU build works too, just slower.
+torch>=2.2
+numpy>=1.26
+scipy>=1.11
+soundfile>=0.12

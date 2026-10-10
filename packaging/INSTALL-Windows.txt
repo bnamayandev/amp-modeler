@@ -1,0 +1,38 @@
+Evil Amplifier for Windows
+==========================
+
+Two ways to use it. You need Windows 10 or 11 (64-bit).
+
+1. Standalone app (no DAW needed)
+   - Double-click "Evil Amplifier.exe".
+   - Windows may say "Windows protected your PC" because the app isn't code-signed.
+     Click "More info", then "Run anyway".
+   - A yellow banner says the input is muted (to avoid feedback through speakers).
+     Click "Settings..." and set:
+       Audio device type:  Windows Audio (Low Latency Mode), or
+                           Windows Audio (Exclusive Mode) for the lowest latency
+                           (the standalone has no ASIO; for ASIO use a DAW, option 2)
+       Output / Input:     your audio interface
+       Sample rate:        48000 Hz
+       Audio buffer size:  128 samples (go up to 256 if you hear crackles)
+       Active inputs:      ONLY the input your guitar is plugged into
+       Mute audio input:   untick it
+   - Use headphones or studio monitors.
+
+2. Plugin in a DAW (Reaper, Ableton Live, FL Studio, Cubase, Studio One, Bitwig...)
+   - Copy the folder "Evil Amplifier.vst3" into
+         C:\Program Files\Common Files\VST3\
+     (Windows will ask for administrator permission.)
+   - Rescan plugins in your DAW, then put "Evil Amplifier" on a mono track with your
+     guitar input. Use your interface's ASIO driver in the DAW for the lowest latency.
+
+Using it
+   - Plug the guitar into the interface's instrument (Hi-Z / INST) input.
+   - Turn up the interface gain until the plugin's INPUT meter peaks around -12 dB when
+     you play hard, without lighting the red clip light at the top.
+   - Amp > Neural plays the built-in Blackstar HT-1 amp model. "Load .nam..." loads any
+     Neural Amp Modeler capture (for example from tone3000.com).
+   - Cabinet > "Load IR..." loads a cabinet impulse response (.wav).
+
+Presets you save go to %APPDATA%\EvilAmplifier\Presets.
+A log (useful for bug reports) is in %APPDATA%\EvilAmplifier\EvilAmplifier.log.

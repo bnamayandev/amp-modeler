@@ -1,0 +1,13 @@
+Evil Amplifier for Linux (x86-64)
+=================================
+
+VST3: copy "Evil Amplifier.vst3" to ~/.vst3/ and rescan in your DAW (Reaper, Bitwig,
+Ardour, Carla).
+
+Standalone: run "./Evil Amplifier". With PipeWire, start it as
+  PIPEWIRE_QUANTUM=128/48000 pw-jack "./Evil Amplifier"
+and pick JACK in Settings for the lowest latency (needs the pipewire-jack package);
+ALSA also works. Click "Settings..." on the yellow banner: choose your interface, enable
+only your guitar's input, and untick "Mute audio input".
+
+Building from source gives you scripts/install-linux.sh, which also adds an app-menu entry.

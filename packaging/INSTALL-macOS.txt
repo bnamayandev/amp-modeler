@@ -1,0 +1,18 @@
+Evil Amplifier for macOS (Apple Silicon and Intel)
+==================================================
+
+The builds aren't code-signed, so macOS quarantines them. After copying, clear the
+quarantine flag in Terminal (shown for the default install locations):
+
+  xattr -dr com.apple.quarantine "/Applications/Evil Amplifier.app"
+  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"Evil Amplifier.vst3"
+  xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"Evil Amplifier.component"
+
+Standalone: copy "Evil Amplifier.app" to /Applications and open it. Allow microphone
+access when asked (that's how macOS names audio input). Click "Settings..." on the yellow
+banner: choose your interface, 48000 Hz, 128 samples, enable only your guitar's input,
+and untick "Mute audio input".
+
+Plugins: copy "Evil Amplifier.vst3" to ~/Library/Audio/Plug-Ins/VST3/ and
+"Evil Amplifier.component" (AU, for Logic and GarageBand) to
+~/Library/Audio/Plug-Ins/Components/, then rescan in your DAW.

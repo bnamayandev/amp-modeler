@@ -10,7 +10,9 @@ import soundfile as sf
 from scipy import signal
 
 
-def load_mono(path: str | Path, target_rate: int | None = None) -> tuple[np.ndarray, int]:
+def load_mono(
+    path: str | Path, target_rate: int | None = None
+) -> tuple[np.ndarray, int]:
     """Load a WAV as float64 mono. Multichannel files must be mono-compatible: channel 0 is used."""
     data, rate = sf.read(str(path), dtype="float64", always_2d=True)
     x = data[:, 0]
@@ -59,8 +61,13 @@ def esr(target: np.ndarray, prediction: np.ndarray) -> float:
 
 
 def rms_db(x: np.ndarray) -> float:
-    return float(20.0 * np.log10(max(np.sqrt(np.mean(np.asarray(x, dtype=np.float64) ** 2)), 1e-12)))
+    return float(
+        20.0
+        * np.log10(max(np.sqrt(np.mean(np.asarray(x, dtype=np.float64) ** 2)), 1e-12))
+    )
 
 
-def write_wav(path: str | Path, x: np.ndarray, rate: int, subtype: str = "FLOAT") -> None:
+def write_wav(
+    path: str | Path, x: np.ndarray, rate: int, subtype: str = "FLOAT"
+) -> None:
     sf.write(str(path), np.asarray(x, dtype=np.float32), rate, subtype=subtype)

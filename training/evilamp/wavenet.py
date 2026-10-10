@@ -62,7 +62,11 @@ class WaveNetConfig:
     head_scale: float = 0.02
 
     def to_json(self) -> dict:
-        return {"layers": [la.to_json() for la in self.layers], "head": None, "head_scale": self.head_scale}
+        return {
+            "layers": [la.to_json() for la in self.layers],
+            "head": None,
+            "head_scale": self.head_scale,
+        }
 
     @staticmethod
     def from_json(cfg: dict) -> "WaveNetConfig":
@@ -71,9 +75,13 @@ class WaveNetConfig:
         arrays = []
         for la in cfg["layers"]:
             if la.get("gated", False) or la.get("activation", "Tanh") != "Tanh":
-                raise ValueError("Only non-gated Tanh WaveNets are supported by this trainer")
+                raise ValueError(
+                    "Only non-gated Tanh WaveNets are supported by this trainer"
+                )
             if "head_size" not in la:
-                raise ValueError("Only the legacy head_size/head_bias layer format is supported")
+                raise ValueError(
+                    "Only the legacy head_size/head_bias layer format is supported"
+                )
             arrays.append(
                 LayerArrayConfig(
                     input_size=la["input_size"],
@@ -88,7 +96,9 @@ class WaveNetConfig:
         return WaveNetConfig(layers=arrays, head_scale=float(cfg["head_scale"]))
 
 
-def _two_array_config(channels: int, head: int, dil_a: list[int], dil_b: list[int]) -> WaveNetConfig:
+def _two_array_config(
+    channels: int, head: int, dil_a: list[int], dil_b: list[int]
+) -> WaveNetConfig:
     return WaveNetConfig(
         layers=[
             LayerArrayConfig(1, 1, head, channels, 3, dil_a, head_bias=False),
@@ -99,7 +109,9 @@ def _two_array_config(channels: int, head: int, dil_a: list[int], dil_b: list[in
 
 # Sizes follow the NAM trainer's named architectures.
 ARCHITECTURES = {
-    "standard": lambda: _two_array_config(16, 8, _STANDARD_DILATIONS, _STANDARD_DILATIONS),
+    "standard": lambda: _two_array_config(
+        16, 8, _STANDARD_DILATIONS, _STANDARD_DILATIONS
+    ),
     "lite": lambda: _two_array_config(12, 6, _LITE_DILATIONS_A, _LITE_DILATIONS_B),
     "feather": lambda: _two_array_config(8, 4, _LITE_DILATIONS_A, _LITE_DILATIONS_B),
     "nano": lambda: _two_array_config(4, 2, _LITE_DILATIONS_A, _LITE_DILATIONS_B),
@@ -107,9 +119,13 @@ ARCHITECTURES = {
 
 
 class _Layer(nn.Module):
-    def __init__(self, condition_size: int, channels: int, kernel_size: int, dilation: int):
+    def __init__(
+        self, condition_size: int, channels: int, kernel_size: int, dilation: int
+    ):
         super().__init__()
-        self.conv = nn.Conv1d(channels, channels, kernel_size, dilation=dilation, bias=True)
+        self.conv = nn.Conv1d(
+            channels, channels, kernel_size, dilation=dilation, bias=True
+        )
         self.input_mixin = nn.Conv1d(condition_size, channels, 1, bias=False)
         self.layer1x1 = nn.Conv1d(channels, channels, 1, bias=True)
 
@@ -125,9 +141,12 @@ class _LayerArray(nn.Module):
         self.cfg = cfg
         self.rechannel = nn.Conv1d(cfg.input_size, cfg.channels, 1, bias=False)
         self.layers = nn.ModuleList(
-            _Layer(cfg.condition_size, cfg.channels, cfg.kernel_size, d) for d in cfg.dilations
+            _Layer(cfg.condition_size, cfg.channels, cfg.kernel_size, d)
+            for d in cfg.dilations
         )
-        self.head_rechannel = nn.Conv1d(cfg.channels, cfg.head_size, 1, bias=cfg.head_bias)
+        self.head_rechannel = nn.Conv1d(
+            cfg.channels, cfg.head_size, 1, bias=cfg.head_bias
+        )
 
     @property
     def receptive_field(self) -> int:
@@ -138,7 +157,11 @@ class _LayerArray(nn.Module):
         x = self.rechannel(x)
         for layer in self.layers:
             x, head_term = layer(x, c, out_length)
-            head_input = head_term if head_input is None else head_input[:, :, -out_length:] + head_term
+            head_input = (
+                head_term
+                if head_input is None
+                else head_input[:, :, -out_length:] + head_term
+            )
         return self.head_rechannel(head_input), x
 
     def flat_weights(self) -> list[torch.Tensor]:
@@ -159,7 +182,13 @@ class _LayerArray(nn.Module):
     def parameters_in_export_order(self) -> list[torch.Tensor]:
         p = [self.rechannel.weight]
         for layer in self.layers:
-            p += [layer.conv.weight, layer.conv.bias, layer.input_mixin.weight, layer.layer1x1.weight, layer.layer1x1.bias]
+            p += [
+                layer.conv.weight,
+                layer.conv.bias,
+                layer.input_mixin.weight,
+                layer.layer1x1.weight,
+                layer.layer1x1.bias,
+            ]
         p.append(self.head_rechannel.weight)
         if self.cfg.head_bias:
             p.append(self.head_rechannel.bias)
@@ -173,9 +202,13 @@ class WaveNet(nn.Module):
         super().__init__()
         for prev, nxt in zip(config.layers, config.layers[1:]):
             if nxt.channels != prev.head_size:
-                raise ValueError("Each layer array's channels must equal the previous array's head_size")
+                raise ValueError(
+                    "Each layer array's channels must equal the previous array's head_size"
+                )
             if nxt.input_size != prev.channels:
-                raise ValueError("Each layer array's input_size must equal the previous array's channels")
+                raise ValueError(
+                    "Each layer array's input_size must equal the previous array's channels"
+                )
         if config.layers[-1].head_size != 1:
             raise ValueError("The last layer array must have head_size 1 (mono output)")
         self.config = config
@@ -195,7 +228,9 @@ class WaveNet(nn.Module):
 
     def forward_causal(self, x: torch.Tensor) -> torch.Tensor:
         """Same length in and out; history before the first sample is silence (as after NAM's prewarm)."""
-        pad = torch.zeros(x.shape[0], self.receptive_field - 1, dtype=x.dtype, device=x.device)
+        pad = torch.zeros(
+            x.shape[0], self.receptive_field - 1, dtype=x.dtype, device=x.device
+        )
         return self(torch.cat([pad, x], dim=1))
 
     @torch.no_grad()
@@ -218,10 +253,14 @@ class WaveNet(nn.Module):
         return weights
 
     def import_weights(self, weights: list[float]) -> None:
-        params = [p for la in self.layer_arrays for p in la.parameters_in_export_order()]
+        params = [
+            p for la in self.layer_arrays for p in la.parameters_in_export_order()
+        ]
         expected = sum(p.numel() for p in params) + 1
         if len(weights) != expected:
-            raise ValueError(f"Weight count mismatch: file has {len(weights)}, architecture needs {expected}")
+            raise ValueError(
+                f"Weight count mismatch: file has {len(weights)}, architecture needs {expected}"
+            )
         flat = torch.tensor(weights[:-1], dtype=torch.float32)
         offset = 0
         with torch.no_grad():
@@ -267,7 +306,9 @@ class NamMetadata:
         return meta
 
 
-def export_nam(model: WaveNet, path: str | Path, sample_rate: int, metadata: NamMetadata) -> None:
+def export_nam(
+    model: WaveNet, path: str | Path, sample_rate: int, metadata: NamMetadata
+) -> None:
     doc = {
         "version": NAM_FILE_VERSION,
         "metadata": metadata.to_json(),

@@ -74,7 +74,9 @@ def _plucks(rng, seconds: float) -> np.ndarray:
             y = np.empty(length)
             for i in range(length):
                 y[i] = buf[i % period]
-                buf[i % period] = 0.996 * 0.5 * (buf[i % period] + buf[(i + 1) % period])
+                buf[i % period] = (
+                    0.996 * 0.5 * (buf[i % period] + buf[(i + 1) % period])
+                )
             note += y
         note *= level / max(np.max(np.abs(note)), 1e-9)
         out[pos : pos + length] += note[: n - pos]
@@ -97,15 +99,31 @@ def _region(rng, seconds: float, di: np.ndarray | None) -> np.ndarray:
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("out_dir")
-    p.add_argument("--di", help="your own guitar DI recording(s), split across train/val/test", nargs="*", default=[])
-    p.add_argument("--train-seconds", type=float, default=150.0, help="synthetic material in the train region")
+    p.add_argument(
+        "--di",
+        help="your own guitar DI recording(s), split across train/val/test",
+        nargs="*",
+        default=[],
+    )
+    p.add_argument(
+        "--train-seconds",
+        type=float,
+        default=150.0,
+        help="synthetic material in the train region",
+    )
     p.add_argument("--seed", type=int, default=2026)
     args = p.parse_args()
 
     rng = np.random.default_rng(args.seed)
-    di = np.concatenate([audio.load_mono(f, RATE)[0] for f in args.di]) if args.di else None
+    di = (
+        np.concatenate([audio.load_mono(f, RATE)[0] for f in args.di])
+        if args.di
+        else None
+    )
     # Split the DI 80/10/10 so validation and test contain real playing the model never saw.
     di_parts = (None, None, None)
     if di is not None:

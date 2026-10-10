@@ -44,14 +44,21 @@ def make_ir(fs: int = 48000, length: int = 4096) -> np.ndarray:
     ir = signal.sosfilt(sos, impulse)
     # A weak reflection from the cabinet back panel, ~0.6 ms behind the direct sound.
     delay = int(0.0006 * fs)
-    ir[delay:] += 0.18 * signal.sosfilt(signal.butter(2, 1500, "lowpass", fs=fs, output="sos"), ir)[: length - delay]
+    ir[delay:] += (
+        0.18
+        * signal.sosfilt(signal.butter(2, 1500, "lowpass", fs=fs, output="sos"), ir)[
+            : length - delay
+        ]
+    )
     fade = int(0.25 * length)
     ir[-fade:] *= np.hanning(2 * fade)[fade:]
     return ir / np.max(np.abs(ir)) * 0.9
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument("out")
     p.add_argument("--rate", type=int, default=48000)
     args = p.parse_args()

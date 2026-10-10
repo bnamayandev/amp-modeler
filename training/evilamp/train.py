@@ -40,9 +40,17 @@ def _mrstft(y_hat: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     total = y.new_zeros(())
     for n_fft, hop, win in ((1024, 120, 600), (2048, 240, 1200), (512, 50, 240)):
         window = torch.hann_window(win, device=y.device)
-        mag = lambda s: torch.stft(s, n_fft, hop, win, window, return_complex=True).abs().clamp_min(1e-8)  # noqa: E731
+        mag = (
+            lambda s: torch.stft(s, n_fft, hop, win, window, return_complex=True)
+            .abs()
+            .clamp_min(1e-8)
+        )  # noqa: E731
         m, m_hat = mag(y), mag(y_hat)
-        total = total + torch.linalg.norm(m - m_hat) / torch.linalg.norm(m) + F.l1_loss(torch.log(m_hat), torch.log(m))
+        total = (
+            total
+            + torch.linalg.norm(m - m_hat) / torch.linalg.norm(m)
+            + F.l1_loss(torch.log(m_hat), torch.log(m))
+        )
     return total / 3.0
 
 
@@ -66,7 +74,9 @@ def _load_pairs(args) -> dict:
     rate = args.sample_rate
     if args.capture_meta:
         meta = json.loads(Path(args.capture_meta).read_text())
-        signal_file = args.capture_input or str(Path(args.capture_meta).parent / meta["signal_file"])
+        signal_file = args.capture_input or str(
+            Path(args.capture_meta).parent / meta["signal_file"]
+        )
         x, x_rate = audio.load_mono(signal_file)
         y, y_rate = audio.load_mono(args.capture_output)
         if x_rate != meta["sample_rate"] or y_rate != meta["sample_rate"]:
@@ -77,10 +87,14 @@ def _load_pairs(args) -> dict:
         if args.delay == "auto":
             delays = _detect_blip_delay(y, meta["blips"], y_rate)
             if not delays:
-                raise SystemExit("Could not find the calibration blips in the recording. Is the output level too low?")
+                raise SystemExit(
+                    "Could not find the calibration blips in the recording. Is the output level too low?"
+                )
             spread = max(delays) - min(delays)
             if spread > 4:
-                raise SystemExit(f"Blip delays disagree by {spread} samples ({delays}); check the recording")
+                raise SystemExit(
+                    f"Blip delays disagree by {spread} samples ({delays}); check the recording"
+                )
             # Keep one sample of extra lag so the model never has to predict the future.
             delay = int(np.median(delays)) - 1
             print(f"Latency from blips: {delays} -> using {delay} samples")
@@ -90,7 +104,10 @@ def _load_pairs(args) -> dict:
         segs = meta["segments"]
         pairs = {k: (x[a:b], y[a:b]) for k, (a, b) in segs.items()}
         if x_rate != rate:
-            pairs = {k: (audio.resample(a, x_rate, rate), audio.resample(b, x_rate, rate)) for k, (a, b) in pairs.items()}
+            pairs = {
+                k: (audio.resample(a, x_rate, rate), audio.resample(b, x_rate, rate))
+                for k, (a, b) in pairs.items()
+            }
         return {"pairs": pairs, "delay": delay}
 
     def load(inp, tgt):
@@ -100,10 +117,12 @@ def _load_pairs(args) -> dict:
             print(f"warning: {inp} and {tgt} differ in length; trimming to the shorter")
         estimate = audio.estimate_delay(xi, yi)
         delay = estimate if args.delay == "auto" else int(args.delay)
-        print(f"{Path(tgt).name}: cross-correlation lag {estimate} samples, using {delay}")
+        print(
+            f"{Path(tgt).name}: cross-correlation lag {estimate} samples, using {delay}"
+        )
         return audio.align(xi, yi, delay), delay
 
-    (train, delay) = load(args.train_input, args.train_target)
+    train, delay = load(args.train_input, args.train_target)
     pairs = {"train": train}
     if args.val_input:
         pairs["val"] = load(args.val_input, args.val_target)[0]
@@ -123,7 +142,9 @@ def _load_pairs(args) -> dict:
     return {"pairs": pairs, "delay": delay}
 
 
-def _evaluate(model: WaveNet, x: torch.Tensor, y: np.ndarray) -> tuple[float, np.ndarray]:
+def _evaluate(
+    model: WaveNet, x: torch.Tensor, y: np.ndarray
+) -> tuple[float, np.ndarray]:
     model.eval()
     prev = torch.backends.cudnn.allow_tf32
     torch.backends.cudnn.allow_tf32 = False  # full fp32 for reported numbers
@@ -136,7 +157,9 @@ def _evaluate(model: WaveNet, x: torch.Tensor, y: np.ndarray) -> tuple[float, np
 
 
 def main(argv=None) -> None:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     g = p.add_argument_group("data (pairs)")
     for split in ("train", "val", "test"):
         g.add_argument(f"--{split}-input")
@@ -145,27 +168,59 @@ def main(argv=None) -> None:
     g.add_argument("--capture-meta", help="JSON written by evilamp.capture_signal")
     g.add_argument("--capture-input", help="override the signal file named in the JSON")
     g.add_argument("--capture-output", help="the device's recorded output")
-    p.add_argument("--delay", default="0", help="output latency in samples, or 'auto' (default 0: pre-aligned)")
-    p.add_argument("--sample-rate", type=int, default=48000, help="rate the model is trained and runs at")
+    p.add_argument(
+        "--delay",
+        default="0",
+        help="output latency in samples, or 'auto' (default 0: pre-aligned)",
+    )
+    p.add_argument(
+        "--sample-rate",
+        type=int,
+        default=48000,
+        help="rate the model is trained and runs at",
+    )
     p.add_argument("--arch", choices=sorted(ARCHITECTURES), default="standard")
     p.add_argument("--epochs", type=int, default=100)
     p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--segment", type=int, default=8192, help="output samples per training example")
+    p.add_argument(
+        "--segment", type=int, default=8192, help="output samples per training example"
+    )
     p.add_argument("--lr", type=float, default=0.004)
-    p.add_argument("--lr-decay", type=float, default=0.007, help="per-epoch exponential decay")
+    p.add_argument(
+        "--lr-decay", type=float, default=0.007, help="per-epoch exponential decay"
+    )
     p.add_argument("--mrstft-weight", type=float, default=2e-4)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     p.add_argument("--out", required=True, help="output .nam path")
     p.add_argument("--report", help="JSON report path (default: next to --out)")
-    p.add_argument("--renders", help="directory for held-out input/target/prediction WAVs (for A/B)")
+    p.add_argument(
+        "--renders",
+        help="directory for held-out input/target/prediction WAVs (for A/B)",
+    )
     m = p.add_argument_group("metadata")
     m.add_argument("--name", default="")
     m.add_argument("--modeled-by", default="")
-    m.add_argument("--gear-type", default="amp", choices=["amp", "pedal", "pedal_amp", "amp_cab", "amp_pedal_cab", "preamp", "studio"])
+    m.add_argument(
+        "--gear-type",
+        default="amp",
+        choices=[
+            "amp",
+            "pedal",
+            "pedal_amp",
+            "amp_cab",
+            "amp_pedal_cab",
+            "preamp",
+            "studio",
+        ],
+    )
     m.add_argument("--gear-make", default="")
     m.add_argument("--gear-model", default="")
-    m.add_argument("--tone-type", default="", choices=["", "clean", "overdrive", "crunch", "hi_gain", "fuzz"])
+    m.add_argument(
+        "--tone-type",
+        default="",
+        choices=["", "clean", "overdrive", "crunch", "hi_gain", "fuzz"],
+    )
     args = p.parse_args(argv)
 
     if not args.capture_meta and not (args.train_input and args.train_target):
@@ -200,7 +255,9 @@ def main(argv=None) -> None:
     offsets = torch.arange(window, device=device)
 
     optimiser = torch.optim.Adam(model.parameters(), lr=args.lr)
-    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimiser, gamma=1.0 - args.lr_decay)
+    scheduler = torch.optim.lr_scheduler.ExponentialLR(
+        optimiser, gamma=1.0 - args.lr_decay
+    )
 
     best_esr, best_state, best_epoch = math.inf, None, -1
     history = []
@@ -215,20 +272,31 @@ def main(argv=None) -> None:
             pred = model(xb)
             loss = F.mse_loss(pred, yb)
             if args.mrstft_weight > 0:
-                loss = loss + args.mrstft_weight * _mrstft(_pre_emphasis(pred, 0.85), _pre_emphasis(yb, 0.85))
+                loss = loss + args.mrstft_weight * _mrstft(
+                    _pre_emphasis(pred, 0.85), _pre_emphasis(yb, 0.85)
+                )
             optimiser.zero_grad(set_to_none=True)
             loss.backward()
             optimiser.step()
             running += loss.item()
         scheduler.step()
         val_esr, _ = _evaluate(model, x_val, y_val)
-        history.append({"epoch": epoch, "train_loss": running / steps_per_epoch, "val_esr": val_esr})
+        history.append(
+            {
+                "epoch": epoch,
+                "train_loss": running / steps_per_epoch,
+                "val_esr": val_esr,
+            }
+        )
         marker = ""
         if val_esr < best_esr:
             best_esr, best_epoch = val_esr, epoch
             best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
             marker = "  *"
-        print(f"epoch {epoch:4d}  loss {running / steps_per_epoch:.6f}  val ESR {val_esr:.5f}{marker}", flush=True)
+        print(
+            f"epoch {epoch:4d}  loss {running / steps_per_epoch:.6f}  val ESR {val_esr:.5f}{marker}",
+            flush=True,
+        )
 
     model.load_state_dict(best_state)
     val_esr, _ = _evaluate(model, x_val, y_val)
@@ -280,7 +348,9 @@ def main(argv=None) -> None:
         audio.write_wav(d / "test-target.wav", y_test, args.sample_rate)
         audio.write_wav(d / "test-prediction.wav", test_pred, args.sample_rate)
 
-    print(f"\nbest epoch {best_epoch}: validation ESR {val_esr:.5f}, held-out test ESR {test_esr:.5f}")
+    print(
+        f"\nbest epoch {best_epoch}: validation ESR {val_esr:.5f}, held-out test ESR {test_esr:.5f}"
+    )
     print(f"wrote {out} and {report_path} ({elapsed / 60:.1f} min)")
 
 

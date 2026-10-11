@@ -109,6 +109,7 @@ endif()
 target_sources(EvilAmplifier PRIVATE
     source/PluginProcessor.cpp
     source/PluginEditor.cpp
+    source/PipeWireJack.cpp
     source/gui/EvilLookAndFeel.cpp
     source/gui/Widgets.cpp)
 target_compile_definitions(EvilAmplifier PUBLIC ${EVIL_JUCE_DEFINITIONS})
@@ -144,6 +145,7 @@ if(EVIL_BUILD_TOOLS)
         tools/evil_snapshot.cpp
         source/PluginProcessor.cpp
         source/PluginEditor.cpp
+        source/PipeWireJack.cpp
         source/gui/EvilLookAndFeel.cpp
         source/gui/Widgets.cpp)
     target_compile_definitions(evil-snapshot PRIVATE

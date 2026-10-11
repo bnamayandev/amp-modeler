@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 
 #include "PluginEditor.h"
+#include "PipeWireJack.h"
 
 namespace evil {
 namespace {
@@ -26,6 +27,8 @@ EvilAmplifierProcessor::EvilAmplifierProcessor()
                                           getCab().getSource()};
           },
           [this](const PresetManager::Sources &s) { applySources(s); }) {
+  if (wrapperType == wrapperType_Standalone)
+    standalone::prepareAudioDevices(); // the audio device opens after this
   ModelManager::enableFastTanh(); // before any model is built
   juce::String error;
   if (!chain.getCab().load(params::defaultIrSource, error))

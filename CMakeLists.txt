@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.24) # 3.24: $<LINK_LIBRARY:WHOLE_ARCHIVE>
 # Must be set before project(). C++20 std::filesystem needs macOS 10.15; 11.0 covers arm64.
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
-project(EvilAmplifier VERSION 0.1.0 LANGUAGES C CXX)
+project(EvilAmplifier VERSION 0.1.1 LANGUAGES C CXX)
 
 # Windows: link the C++ runtime statically so users don't need the Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

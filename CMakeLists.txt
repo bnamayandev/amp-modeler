@@ -21,9 +21,6 @@ endif()
 option(EVIL_BUILD_TESTS "Build the Catch2 test suite" ON)
 option(EVIL_BUILD_TOOLS "Build the evil-cli render/benchmark tool" ON)
 option(EVIL_COPY_PLUGIN_AFTER_BUILD "Install plugins into the user plugin folders after building" OFF)
-# Windows: path to the unpacked Steinberg ASIO SDK (the folder holding common/ and host/).
-# Enables ASIO in the standalone's audio settings. The SDK cannot be fetched automatically.
-set(EVIL_ASIO_SDK_DIR "" CACHE PATH "Steinberg ASIO SDK folder (Windows; enables ASIO in the standalone)")
 
 include(cmake/Dependencies.cmake)
 
@@ -102,24 +99,11 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     endif()
 endif()
 
-# Windows: ASIO support for the standalone, when the user supplies the Steinberg ASIO SDK.
-# JUCE_ASIO makes juce_audio_devices include the SDK's iasiodrv.h, so every target that
-# compiles JUCE needs the SDK's include folders.
-set(EVIL_ASIO_INCLUDES "")
+# Windows: ASIO in the standalone's audio settings. JUCE 8 bundles the ASIO SDK headers
+# (GPLv3), so no separate download is needed. Without ASIO, Windows Audio (shared mode) only
+# offers the system mixer's single sample rate and buffer size.
 if(WIN32)
-    if(EVIL_ASIO_SDK_DIR)
-        if(EXISTS "${EVIL_ASIO_SDK_DIR}/common/asio.h" AND EXISTS "${EVIL_ASIO_SDK_DIR}/host/pc/asiolist.h")
-            list(APPEND EVIL_JUCE_DEFINITIONS JUCE_ASIO=1)
-            set(EVIL_ASIO_INCLUDES
-                "${EVIL_ASIO_SDK_DIR}/common" "${EVIL_ASIO_SDK_DIR}/host" "${EVIL_ASIO_SDK_DIR}/host/pc")
-            message(STATUS "ASIO support: on (${EVIL_ASIO_SDK_DIR})")
-        else()
-            message(FATAL_ERROR "EVIL_ASIO_SDK_DIR='${EVIL_ASIO_SDK_DIR}' does not look like the ASIO SDK "
-                                "(expected common/asio.h and host/pc/asiolist.h)")
-        endif()
-    else()
-        message(STATUS "ASIO support: off (set -DEVIL_ASIO_SDK_DIR=<ASIO SDK folder> to enable)")
-    endif()
+    list(APPEND EVIL_JUCE_DEFINITIONS JUCE_ASIO=1)
 endif()
 
 target_sources(EvilAmplifier PRIVATE
@@ -128,7 +112,6 @@ target_sources(EvilAmplifier PRIVATE
     source/gui/EvilLookAndFeel.cpp
     source/gui/Widgets.cpp)
 target_compile_definitions(EvilAmplifier PUBLIC ${EVIL_JUCE_DEFINITIONS})
-target_include_directories(EvilAmplifier PRIVATE ${EVIL_ASIO_INCLUDES})
 target_link_libraries(EvilAmplifier
     PRIVATE
         evil_core
@@ -148,7 +131,6 @@ if(EVIL_BUILD_TOOLS)
     juce_add_console_app(evil-cli PRODUCT_NAME "evil-cli")
     target_sources(evil-cli PRIVATE tools/evil_cli.cpp)
     target_compile_definitions(evil-cli PRIVATE ${EVIL_JUCE_DEFINITIONS})
-    target_include_directories(evil-cli PRIVATE ${EVIL_ASIO_INCLUDES})
     target_link_libraries(evil-cli
         PRIVATE
             evil_core
@@ -168,7 +150,6 @@ if(EVIL_BUILD_TOOLS)
         ${EVIL_JUCE_DEFINITIONS}
         JucePlugin_Name="Evil Amplifier"
         JucePlugin_VersionString="${PROJECT_VERSION}")
-    target_include_directories(evil-snapshot PRIVATE ${EVIL_ASIO_INCLUDES})
     target_link_libraries(evil-snapshot
         PRIVATE
             evil_core

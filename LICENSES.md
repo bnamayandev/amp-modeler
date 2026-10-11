@@ -9,7 +9,7 @@ they combine the components below, and the strongest terms apply to the combinat
 | [NeuralAmpModelerCore v0.6.0](https://github.com/sdatkinson/NeuralAmpModelerCore) | Neural model inference | MIT |
 | [Eigen](https://gitlab.com/libeigen/eigen) | Linear algebra under NAM Core | MPL 2.0 |
 | [nlohmann/json](https://github.com/nlohmann/json) (vendored in NAM Core) | Reading `.nam` files | MIT |
-| Steinberg ASIO SDK (optional, Windows) | ASIO in the standalone; only if you build with `-DEVIL_ASIO_SDK_DIR` | Not bundled. Check Steinberg's current SDK terms before distributing a build that uses it |
+| Steinberg ASIO SDK headers (bundled with JUCE, Windows only) | ASIO in the standalone | GPLv3 (compatible with distributing the combination under AGPLv3) |
 | [Catch2 v3.8.1](https://github.com/catchorg/Catch2) | Unit tests only (not shipped) | BSL-1.0 |
 | [PyTorch](https://pytorch.org), NumPy, SciPy, soundfile | Offline training only (not shipped) | BSD-style |
 

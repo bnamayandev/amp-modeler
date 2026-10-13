@@ -36,7 +36,7 @@ public:
     OverdrivePedal::Settings overdrive;
     AmpStage::Settings amp;
     bool cabOn = true;
-    float bassDb = 0.0f, midDb = 0.0f, trebleDb = 0.0f;
+    Equaliser::Gains eqDb{};
     ChorusPedal::Settings chorus;
     DelayPedal::Settings delay;
     ReverbPedal::Settings reverb;

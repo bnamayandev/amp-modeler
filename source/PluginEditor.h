@@ -97,7 +97,8 @@ private:
   juce::AudioProcessorValueTreeState::ButtonAttachment cabAttachment;
 
   // EQ + output
-  gui::Knob bassKnob, midKnob, trebleKnob, outputKnob;
+  std::array<std::unique_ptr<gui::Fader>, Equaliser::numBands> eqFaders;
+  gui::Knob outputKnob;
   gui::LevelMeter outputMeter;
 
   // Footer: metronome, transposer, stats

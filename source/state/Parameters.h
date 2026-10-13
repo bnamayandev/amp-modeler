@@ -16,10 +16,14 @@ inline constexpr const char *tone = "tone";
 inline constexpr const char *oversampling = "oversampling";
 inline constexpr const char *normalise = "normalise";
 inline constexpr const char *cabOn = "cab_on";
-inline constexpr const char *bass = "bass";
-inline constexpr const char *mid = "mid";
-inline constexpr const char *treble = "treble";
+// Graphic EQ bands, low to high (Equaliser::frequencies).
+inline constexpr std::array<const char *, Equaliser::numBands> eqBands{
+    "eq_50",  "eq_100", "eq_200", "eq_400",  "eq_800",
+    "eq_1k6", "eq_3k2", "eq_6k4", "eq_12k8"};
 inline constexpr const char *output = "output";
+
+// The three-band EQ the nine bands replaced: only read, to upgrade old state.
+inline constexpr std::array<const char *, 3> legacyEq{"bass", "mid", "treble"};
 
 // Transposer and pedals.
 inline constexpr const char *transpose = "transpose";
@@ -57,6 +61,14 @@ inline constexpr const char *metronomeLevel = "metronome_level";
    store nor change them. */
 bool isGlobal(const juce::String &parameterId);
 
+/** A band's centre frequency as its fader is labelled, e.g. "400" or "1.6k". */
+juce::String eqBandLabel(size_t band);
+
+/** Replaces the bass/mid/treble of a preset or session saved before the
+   nine-band EQ with the nearest band settings, in place. Each child element
+   tagged `tag` holds one parameter, as "id" and "value" attributes. */
+void upgradeLegacyEq(juce::XmlElement &saved, juce::StringRef tag);
+
 // Non-parameter state saved alongside the parameters.
 inline constexpr const char *modelSourceProperty = "modelSource";
 inline constexpr const char *irSourceProperty = "irSource";
@@ -82,9 +94,7 @@ private:
   std::atomic<float> *oversampling;
   std::atomic<float> *normalise;
   std::atomic<float> *cabOn;
-  std::atomic<float> *bass;
-  std::atomic<float> *mid;
-  std::atomic<float> *treble;
+  std::array<std::atomic<float> *, Equaliser::numBands> eq;
   std::atomic<float> *output;
   std::atomic<float> *transpose;
   std::atomic<float> *compOn, *compSustain, *compBlend, *compLevel;

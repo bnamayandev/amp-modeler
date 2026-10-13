@@ -207,6 +207,7 @@ void EvilAmplifierProcessor::setStateInformation(const void *data,
   if (xml == nullptr || !xml->hasTagName(state.state.getType()))
     return;
 
+  params::upgradeLegacyEq(*xml, "PARAM"); // APVTS's parameter tag
   const auto tree = juce::ValueTree::fromXml(*xml);
   state.replaceState(tree);
 

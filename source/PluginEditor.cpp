@@ -33,9 +33,6 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
       oversamplingAttachment(p.getState(), params::oversampling,
                              withItems(oversamplingBox, {"Off", "2x", "4x"})),
       cabAttachment(p.getState(), params::cabOn, cabButton),
-      bassKnob(p.getState(), params::bass, "Bass"),
-      midKnob(p.getState(), params::mid, "Mid"),
-      trebleKnob(p.getState(), params::treble, "Treble"),
       outputKnob(p.getState(), params::output, "Output"),
       bpmAttachment(p.getState(), params::metronomeBpm, bpmSlider),
       metronomeLevelAttachment(p.getState(), params::metronomeLevel,
@@ -123,8 +120,13 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
       "Load a cabinet impulse response (WAV, AIFF or FLAC)");
 
   // EQ + output
-  for (auto *c : std::initializer_list<juce::Component *>{
-           &bassKnob, &midKnob, &trebleKnob, &outputKnob, &outputMeter})
+  for (size_t b = 0; b < eqFaders.size(); ++b) {
+    eqFaders[b] = std::make_unique<gui::Fader>(p.getState(), params::eqBands[b],
+                                               params::eqBandLabel(b));
+    ampPage.addAndMakeVisible(*eqFaders[b]);
+  }
+  for (auto *c :
+       std::initializer_list<juce::Component *>{&outputKnob, &outputMeter})
     ampPage.addAndMakeVisible(c);
 
   ampPage.setInterceptsMouseClicks(false, true);
@@ -431,10 +433,11 @@ void EvilAmplifierEditor::layoutCanvas() {
   // EQ
   {
     auto b = eqPanel.reduced(14).withTrimmedTop(30);
-    const int w = b.getWidth() / 3;
-    bassKnob.setBounds(b.removeFromLeft(w));
-    midKnob.setBounds(b.removeFromLeft(w));
-    trebleKnob.setBounds(b);
+    const auto edge = [&b, this](size_t i) {
+      return b.getX() + (int)(i * (size_t)b.getWidth() / eqFaders.size());
+    };
+    for (size_t i = 0; i < eqFaders.size(); ++i)
+      eqFaders[i]->setBounds(b.withLeft(edge(i)).withRight(edge(i + 1)));
   }
 
   // Output

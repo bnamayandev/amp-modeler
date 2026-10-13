@@ -16,6 +16,20 @@ private:
   juce::AudioProcessorValueTreeState::SliderAttachment attachment;
 };
 
+/** Vertical fader attached to a bipolar parameter (a graphic EQ band), with
+    its value above and its title below. */
+class Fader final : public juce::Component {
+public:
+  Fader(juce::AudioProcessorValueTreeState &state,
+        const juce::String &parameterId, const juce::String &title);
+  void resized() override;
+
+private:
+  juce::Label value, title;
+  juce::Slider slider{juce::Slider::LinearVertical, juce::Slider::NoTextBox};
+  juce::AudioProcessorValueTreeState::SliderAttachment attachment;
+};
+
 /** Vertical peak meter with a dB scale (-60..+6 dBFS) and a clip indicator. */
 class LevelMeter final : public juce::Component {
 public:

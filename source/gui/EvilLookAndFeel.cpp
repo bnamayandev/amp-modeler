@@ -25,6 +25,47 @@ void drawGlow(juce::Graphics &g, juce::Point<float> centre, float radius) {
                     .withCentre(centre));
 }
 
+/** A vertical fader in the rotary knob's language: hairline track, the value
+   drawn over it in the accent from the centre (or bottom), and a flat cap. */
+void drawFader(juce::Graphics &g, juce::Rectangle<float> bounds,
+               float sliderPos, juce::Slider &slider) {
+  using namespace colours;
+  const bool enabled = slider.isEnabled();
+  const bool hot = enabled && slider.isMouseOverOrDragging();
+  const auto x = bounds.getCentreX();
+  const auto top = (float)slider.getPositionOfValue(slider.getMaximum());
+  const auto bottom = (float)slider.getPositionOfValue(slider.getMinimum());
+
+  g.setColour(line);
+  g.fillRoundedRectangle(x - 0.75f, top, 1.5f, bottom - top, 0.75f);
+
+  const bool bipolar =
+      slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0 &&
+      std::abs(slider.getMinimum() + slider.getMaximum()) < 1.0e-6;
+  const auto from = bipolar ? (top + bottom) * 0.5f : bottom;
+  if (bipolar) { // the 0 dB tick
+    g.setColour(line);
+    g.fillRect(x - 6.0f, from - 0.5f, 12.0f, 1.0f);
+  }
+  const auto valueColour = !enabled ? mutedSoft : hot ? accentHover : accent;
+  g.setColour(valueColour);
+  g.fillRoundedRectangle(x - 1.25f, juce::jmin(from, sliderPos), 2.5f,
+                         std::abs(sliderPos - from), 1.25f);
+
+  // Cap: the knob body's paper and top light, with its pointer as a level line.
+  const auto cap = juce::Rectangle<float>(20.0f, 10.0f).withCentre({x, sliderPos});
+  if (enabled && std::abs(sliderPos - from) > 0.5f)
+    drawGlow(g, {x, sliderPos}, 12.0f);
+  g.setGradientFill(juce::ColourGradient(
+      background.brighter(0.12f), x, cap.getY(), background.darker(0.15f), x,
+      cap.getBottom(), false));
+  g.fillRoundedRectangle(cap, 3.0f);
+  g.setColour(hot ? muted.withAlpha(0.6f) : line);
+  g.drawRoundedRectangle(cap.reduced(0.5f), 3.0f, 1.0f);
+  g.setColour(enabled ? text : muted);
+  g.fillRect(cap.withSizeKeepingCentre(cap.getWidth() - 10.0f, 1.5f));
+}
+
 bool isPrimary(const juce::Button &button) {
   return button.getProperties()["primary"];
 }
@@ -178,6 +219,11 @@ void EvilLookAndFeel::drawLinearSlider(juce::Graphics &g, int x, int y,
                                        float minSliderPos, float maxSliderPos,
                                        juce::Slider::SliderStyle style,
                                        juce::Slider &slider) {
+  if (style == juce::Slider::LinearVertical) {
+    drawFader(g, juce::Rectangle<int>(x, y, width, height).toFloat(),
+              sliderPos, slider);
+    return;
+  }
   if (style != juce::Slider::LinearBar) {
     LookAndFeel_V4::drawLinearSlider(g, x, y, width, height, sliderPos,
                                      minSliderPos, maxSliderPos, style, slider);

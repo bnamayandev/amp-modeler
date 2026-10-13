@@ -9,9 +9,14 @@
     <Param id="amp_mode" value="2"/>
     <Param id="input" value="3"/>
     <Param id="gate_threshold" value="-60"/>
-    <Param id="bass" value="-3"/>
-    <Param id="mid" value="2"/>
-    <Param id="treble" value="1"/>
+    <Param id="eq_50" value="-2.5"/>
+    <Param id="eq_100" value="-1"/>
+    <Param id="eq_400" value="0.5"/>
+    <Param id="eq_800" value="2"/>
+    <Param id="eq_1k6" value="0.5"/>
+    <Param id="eq_3k2" value="0.5"/>
+    <Param id="eq_6k4" value="1"/>
+    <Param id="eq_12k8" value="1"/>
   </Preset>
   <Preset name="Overdrive Crunch" model="builtin:BlackstarHT1" ir="builtin:EvilCab4x12">
     <Param id="amp_mode" value="1"/>
@@ -25,7 +30,9 @@
     <Param id="tone" value="0.45"/>
     <Param id="oversampling" value="2"/>
     <Param id="gate_threshold" value="-58"/>
-    <Param id="mid" value="3"/>
+    <Param id="eq_400" value="0.5"/>
+    <Param id="eq_800" value="3"/>
+    <Param id="eq_1k6" value="0.5"/>
   </Preset>
   <Preset name="Clean DI + Cab" model="builtin:BlackstarHT1" ir="builtin:EvilCab4x12">
     <Param id="amp_mode" value="0"/>
@@ -51,7 +58,9 @@
     <Param id="fuzz_on" value="1"/>
     <Param id="fuzz_fuzz" value="0.75"/>
     <Param id="fuzz_tone" value="0.45"/>
-    <Param id="mid" value="2"/>
+    <Param id="eq_400" value="0.5"/>
+    <Param id="eq_800" value="2"/>
+    <Param id="eq_1k6" value="0.5"/>
     <Param id="delay_on" value="1"/>
     <Param id="delay_time" value="420"/>
     <Param id="delay_feedback" value="0.3"/>

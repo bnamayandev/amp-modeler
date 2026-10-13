@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <complex>
 #include <numbers>
 
 namespace evil {
@@ -64,6 +65,13 @@ struct BiquadCoeffs {
     const auto k =
         std::tan(std::numbers::pi * clampFreq(sampleRate, freq) / sampleRate);
     return {1 / (1 + k), -1 / (1 + k), 0.0, (k - 1) / (1 + k), 0.0};
+  }
+
+  /** Magnitude response at `freq`, in dB. */
+  double gainDbAt(double sampleRate, double freq) const {
+    const auto z = std::polar(1.0, -2.0 * std::numbers::pi * freq / sampleRate);
+    return 20.0 * std::log10(std::abs((b0 + (b1 + b2 * z) * z) /
+                                      (1.0 + (a1 + a2 * z) * z)));
   }
 
 private:

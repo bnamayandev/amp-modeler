@@ -83,12 +83,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
                                     "Normalise Model", true));
   layout.add(
       std::make_unique<Bool>(juce::ParameterID{cabOn, 1}, "Cabinet", true));
-  for (auto [id, name] :
-       {std::pair{bass, "Bass"}, {mid, "Mid"}, {treble, "Treble"}})
+  for (size_t b = 0; b < eqBands.size(); ++b)
     layout.add(std::make_unique<Float>(
-        juce::ParameterID{id, 1}, name,
-        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.01f), 0.0f,
-        decibels()));
+        juce::ParameterID{eqBands[b], 1}, "EQ " + eqBandLabel(b) + "Hz",
+        juce::NormalisableRange<float>(-Equaliser::maxGainDb,
+                                       Equaliser::maxGainDb, 0.01f),
+        0.0f, decibels()));
   layout.add(std::make_unique<Float>(juce::ParameterID{output, 1}, "Output",
                                      range(-40.0f, 12.0f, 0.0f), 0.0f,
                                      decibels()));
@@ -165,14 +165,48 @@ bool isGlobal(const juce::String &id) {
          id == metronomeLevel;
 }
 
+juce::String eqBandLabel(size_t band) {
+  const auto hz = Equaliser::frequencies[band];
+  return hz < 1000.0 ? juce::String(juce::roundToInt(hz))
+                     : juce::String(hz / 1000.0, 1) + "k";
+}
+
+void upgradeLegacyEq(juce::XmlElement &saved, juce::StringRef tag) {
+  std::array<float, legacyEq.size()> legacy{};
+  juce::Array<juce::XmlElement *> legacyElements;
+  bool hasBands = false;
+  for (auto *e : saved.getChildWithTagNameIterator(tag)) {
+    const auto id = e->getStringAttribute("id");
+    for (size_t i = 0; i < legacyEq.size(); ++i)
+      if (id == legacyEq[i]) {
+        legacy[i] = (float)e->getDoubleAttribute("value");
+        legacyElements.add(e);
+      }
+    for (const auto *band : eqBands)
+      hasBands = hasBands || id == band;
+  }
+  if (legacyElements.isEmpty())
+    return;
+
+  for (auto *e : legacyElements)
+    saved.removeChildElement(e, true);
+  if (hasBands)
+    return;
+  const auto gains = Equaliser::fromLegacy(legacy[0], legacy[1], legacy[2]);
+  for (size_t b = 0; b < eqBands.size(); ++b) {
+    auto *e = saved.createNewChildElement(tag);
+    e->setAttribute("id", eqBands[b]);
+    e->setAttribute("value", gains[b]);
+  }
+}
+
 Snapshot::Snapshot(juce::AudioProcessorValueTreeState &s)
     : input(raw(s, params::input)), gateOn(raw(s, params::gateOn)),
       gateThreshold(raw(s, params::gateThreshold)),
       ampMode(raw(s, params::ampMode)), drive(raw(s, params::drive)),
       tone(raw(s, params::tone)), oversampling(raw(s, params::oversampling)),
       normalise(raw(s, params::normalise)), cabOn(raw(s, params::cabOn)),
-      bass(raw(s, params::bass)), mid(raw(s, params::mid)),
-      treble(raw(s, params::treble)), output(raw(s, params::output)),
+      output(raw(s, params::output)),
       transpose(raw(s, params::transpose)), compOn(raw(s, params::compOn)),
       compSustain(raw(s, params::compSustain)),
       compBlend(raw(s, params::compBlend)),
@@ -193,7 +227,10 @@ Snapshot::Snapshot(juce::AudioProcessorValueTreeState &s)
       reverbMix(raw(s, params::reverbMix)),
       metronomeBpm(raw(s, params::metronomeBpm)),
       metronomeBeats(raw(s, params::metronomeBeats)),
-      metronomeLevel(raw(s, params::metronomeLevel)) {}
+      metronomeLevel(raw(s, params::metronomeLevel)) {
+  for (size_t b = 0; b < eq.size(); ++b)
+    eq[b] = raw(s, eqBands[b]);
+}
 
 SignalChain::Settings Snapshot::read() const noexcept {
   const auto get = [](const std::atomic<float> *p) {
@@ -210,9 +247,8 @@ SignalChain::Settings Snapshot::read() const noexcept {
   s.amp.oversampling = juce::jlimit(0, 2, juce::roundToInt(get(oversampling)));
   s.amp.normalise = get(normalise) >= 0.5f;
   s.cabOn = get(cabOn) >= 0.5f;
-  s.bassDb = get(bass);
-  s.midDb = get(mid);
-  s.trebleDb = get(treble);
+  for (size_t b = 0; b < eq.size(); ++b)
+    s.eqDb[b] = get(eq[b]);
   s.outputDb = get(output);
 
   const auto on = [&](const std::atomic<float> *p) { return get(p) >= 0.5f; };

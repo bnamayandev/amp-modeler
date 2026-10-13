@@ -397,3 +397,62 @@ TEST_CASE("Presets set the pedals but leave transpose and the metronome alone",
     CHECK(host.get(id) == 0.0f);
   CHECK(host.get(params::transpose) == -2.0f);
 }
+
+TEST_CASE("Presets and sessions saved with the three-band EQ keep their tone",
+          "[presets]") {
+  const auto saved = [](float bass, float mid, float treble) {
+    auto xml = std::make_unique<juce::XmlElement>("Preset");
+    for (auto [id, value] : {std::pair{"bass", bass}, std::pair{"mid", mid},
+                             std::pair{"treble", treble}}) {
+      auto *e = xml->createNewChildElement("Param");
+      e->setAttribute("id", id);
+      e->setAttribute("value", value);
+    }
+    return xml;
+  };
+  const auto bandGains = [](const juce::XmlElement &xml) {
+    Equaliser::Gains gains{};
+    for (size_t b = 0; b < gains.size(); ++b) {
+      const auto *e = xml.getChildByAttribute("id", params::eqBands[b]);
+      REQUIRE(e != nullptr);
+      gains[b] = (float)e->getDoubleAttribute("value");
+    }
+    for (const auto *legacy : params::legacyEq)
+      CHECK(xml.getChildByAttribute("id", legacy) == nullptr);
+    return gains;
+  };
+
+  // The nine bands reproduce the old response at their centres.
+  auto xml = saved(-3.0f, 2.0f, 6.0f);
+  params::upgradeLegacyEq(*xml, "Param");
+  const auto gains = bandGains(*xml);
+  for (size_t b = 0; b < gains.size(); ++b) {
+    const double f = Equaliser::frequencies[b];
+    double was = 0.0, now = 0.0;
+    was += BiquadCoeffs::lowShelf(48000.0, 100.0, 0.707, -3.0).gainDbAt(48000.0, f);
+    was += BiquadCoeffs::peak(48000.0, 800.0, 0.8, 2.0).gainDbAt(48000.0, f);
+    was += BiquadCoeffs::highShelf(48000.0, 3200.0, 0.707, 6.0).gainDbAt(48000.0, f);
+    for (size_t i = 0; i < gains.size(); ++i)
+      now += BiquadCoeffs::peak(48000.0, Equaliser::frequencies[i],
+                                Equaliser::q, gains[i])
+                 .gainDbAt(48000.0, f);
+    INFO("band " << b << " was " << was << " dB, now " << now << " dB");
+    CHECK(std::abs(now - was) < 0.1);
+  }
+
+  // A flat old EQ stays exactly flat (and so bit-exact).
+  xml = saved(0.0f, 0.0f, 0.0f);
+  params::upgradeLegacyEq(*xml, "Param");
+  for (const auto g : bandGains(*xml))
+    CHECK(g == 0.0f);
+
+  // Band settings already there win; the stale three-band ones are dropped.
+  xml = saved(6.0f, 6.0f, 6.0f);
+  auto *band = xml->createNewChildElement("Param");
+  band->setAttribute("id", params::eqBands[2]);
+  band->setAttribute("value", -4.0);
+  params::upgradeLegacyEq(*xml, "Param");
+  CHECK(xml->getNumChildElements() == 1);
+  CHECK(xml->getChildByAttribute("id", params::eqBands[2])
+            ->getDoubleAttribute("value") == -4.0);
+}

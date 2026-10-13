@@ -39,6 +39,45 @@ void Knob::resized() {
       b.withSizeKeepingCentre(juce::jmax(diameter, 84), diameter + textHeight));
 }
 
+Fader::Fader(juce::AudioProcessorValueTreeState &state,
+             const juce::String &parameterId, const juce::String &titleText)
+    : attachment(state, parameterId, slider) {
+  for (auto *l : {&value, &title}) {
+    l->setJustificationType(juce::Justification::centred);
+    l->setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(l);
+  }
+  title.setText(titleText.toUpperCase(), juce::dontSendNotification);
+  title.setFont(caption());
+  title.setColour(juce::Label::textColourId, colours::muted);
+  value.setFont(mono(10.5f));
+
+  // Compact, to fit a narrow column: "+3.5", "0.0", "-12.0".
+  slider.onValueChange = [this] {
+    const auto v = slider.getValue();
+    const bool flat = std::abs(v) < 0.05;
+    value.setText((v >= 0.05 ? "+" : "") + juce::String(flat ? 0.0 : v, 1),
+                  juce::dontSendNotification);
+    value.setColour(juce::Label::textColourId,
+                    flat ? colours::mutedSoft : colours::textSoft);
+  };
+  slider.onValueChange();
+  slider.setPopupDisplayEnabled(false, false, nullptr);
+  if (auto *p = state.getParameter(parameterId)) {
+    slider.setDoubleClickReturnValue(true,
+                                     p->convertFrom0to1(p->getDefaultValue()));
+    slider.setTooltip(p->getName(64) + " (double-click to reset)");
+  }
+  addAndMakeVisible(slider);
+}
+
+void Fader::resized() {
+  auto b = getLocalBounds();
+  value.setBounds(b.removeFromTop(16));
+  title.setBounds(b.removeFromBottom(16));
+  slider.setBounds(b.reduced(0, 2));
+}
+
 void LevelMeter::pushPeak(float peakGain, float secondsSinceLast) {
   const float db = juce::Decibels::gainToDecibels(peakGain, -100.0f);
   const float fallDb = 30.0f * secondsSinceLast; // 30 dB/s release

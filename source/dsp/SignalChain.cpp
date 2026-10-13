@@ -67,7 +67,7 @@ void SignalChain::processChunk(float *data, int n, const Settings &s) noexcept {
   footswitches[2].process(overdrive, data, n, s.overdrive, dry);
   amp.process(data, n, s.amp);
   cab.process(data, n, s.cabOn);
-  eq.process(data, n, s.bassDb, s.midDb, s.trebleDb);
+  eq.process(data, n, s.eqDb);
   footswitches[3].process(chorus, data, n, s.chorus, dry);
   footswitches[4].process(delay, data, n, s.delay, dry);
   footswitches[5].process(reverb, data, n, s.reverb, dry);

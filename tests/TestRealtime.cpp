@@ -56,8 +56,8 @@ TEST_CASE("The audio path never allocates or frees, even while models, IRs "
       s.cabOn = random.nextBool();
       s.gateOn = random.nextBool();
       s.amp.normalise = random.nextBool();
-      s.bassDb = random.nextFloat() * 24.0f - 12.0f;
-      s.trebleDb = random.nextFloat() * 24.0f - 12.0f;
+      for (auto &band : s.eqDb)
+        band = random.nextBool() ? 0.0f : random.nextFloat() * 24.0f - 12.0f;
       s.inputDb = random.nextFloat() * 12.0f;
       s.amp.driveDb = random.nextFloat() * 40.0f;
       s.transposeSemitones = random.nextInt(25) - 12;

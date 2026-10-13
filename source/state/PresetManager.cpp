@@ -89,7 +89,9 @@ PresetManager::capture(const juce::String &name) const {
   return xml;
 }
 
-void PresetManager::apply(const juce::XmlElement &preset) {
+void PresetManager::apply(const juce::XmlElement &saved) {
+  juce::XmlElement preset(saved);
+  params::upgradeLegacyEq(preset, paramTag);
   for (auto *p : state.processor.getParameters())
     if (auto *ranged = dynamic_cast<juce::RangedAudioParameter *>(p)) {
       if (params::isGlobal(ranged->getParameterID()))

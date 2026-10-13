@@ -11,7 +11,7 @@ trainer, and it loads any [Neural Amp Modeler](https://www.neuralampmodeler.com)
 guitar ─► input gain ─► noise gate ─► transposer ─► compressor ─► fuzz ─► overdrive ─┐
                                                                                      │
   ┌──────────────────────────────────────────────────────────────────────────────────┘
-  └─► AMP ─────────────────────────► cab IR ─► 3-band EQ ─► chorus ─► delay ─► reverb ─► output
+  └─► AMP ─────────────────────────► cab IR ─► 9-band EQ ─► chorus ─► delay ─► reverb ─► output
       ├─ Neural: NAM model at its trained rate                                  (+ metronome)
       │  (band-limited resampling if the host differs)
       └─ Overdrive: drive ─► [2x/4x oversampled tanh] ─► tone
@@ -78,7 +78,9 @@ plugin where your DAW looks:
 - **Cabinet**: built-in synthetic 4x12, or **Load IR...** (WAV/AIFF/FLAC, any rate, mono or
   first channel of stereo, up to 2 s). IRs are energy-normalised and swap without clicks.
   Turn it off for models that already include a cab (mic'd captures).
-- **EQ**: bass shelf 100 Hz, mid peak 800 Hz, treble shelf 3.2 kHz, ±12 dB.
+- **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz, ±12 dB each.
+  Presets and sessions saved with the old bass/mid/treble EQ load with the nearest
+  band settings.
 - **Pedals** (the *pedals* tab; its label counts the pedals that are on): compressor, fuzz and
   overdrive go before the amp; chorus, delay and reverb after the cab, like an effects loop.
   Click a footswitch to turn a pedal on; switching crossfades over 10 ms, and a pedal that's

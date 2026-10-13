@@ -36,4 +36,44 @@
     <Param id="gate_on" value="0"/>
     <Param id="cab_on" value="0"/>
   </Preset>
+  <Preset name="Screamer into HT-1" model="builtin:BlackstarHT1" ir="builtin:EvilCab4x12">
+    <Param id="amp_mode" value="2"/>
+    <Param id="gate_threshold" value="-60"/>
+    <Param id="od_on" value="1"/>
+    <Param id="od_drive" value="0.2"/>
+    <Param id="od_tone" value="0.55"/>
+    <Param id="od_level" value="6"/>
+  </Preset>
+  <Preset name="Fuzz Lead" model="builtin:BlackstarHT1" ir="builtin:EvilCab4x12">
+    <Param id="amp_mode" value="2"/>
+    <Param id="input" value="-3"/>
+    <Param id="gate_threshold" value="-58"/>
+    <Param id="fuzz_on" value="1"/>
+    <Param id="fuzz_fuzz" value="0.75"/>
+    <Param id="fuzz_tone" value="0.45"/>
+    <Param id="mid" value="2"/>
+    <Param id="delay_on" value="1"/>
+    <Param id="delay_time" value="420"/>
+    <Param id="delay_feedback" value="0.3"/>
+    <Param id="delay_mix" value="0.25"/>
+    <Param id="reverb_on" value="1"/>
+    <Param id="reverb_mix" value="0.2"/>
+  </Preset>
+  <Preset name="Ambient Clean" model="builtin:BlackstarHT1" ir="builtin:EvilCab4x12">
+    <Param id="amp_mode" value="0"/>
+    <Param id="gate_on" value="0"/>
+    <Param id="comp_on" value="1"/>
+    <Param id="comp_sustain" value="0.6"/>
+    <Param id="comp_blend" value="0.7"/>
+    <Param id="chorus_on" value="1"/>
+    <Param id="chorus_rate" value="0.5"/>
+    <Param id="chorus_mix" value="0.4"/>
+    <Param id="delay_on" value="1"/>
+    <Param id="delay_time" value="480"/>
+    <Param id="delay_feedback" value="0.45"/>
+    <Param id="delay_mix" value="0.4"/>
+    <Param id="reverb_on" value="1"/>
+    <Param id="reverb_decay" value="0.75"/>
+    <Param id="reverb_mix" value="0.45"/>
+  </Preset>
 </FactoryPresets>

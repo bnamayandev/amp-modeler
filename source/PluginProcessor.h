@@ -90,6 +90,16 @@ public:
     return outputPeak.exchange(0.0f, std::memory_order_relaxed);
   }
   bool isGateOpen() const noexcept { return chain.isGateOpen(); }
+
+  // Metronome: whether it runs is not saved, so a session never opens clicking.
+  bool isMetronomeRunning() const noexcept { return metronomeRunning.load(); }
+  void setMetronomeRunning(bool shouldRun) noexcept {
+    metronomeRunning.store(shouldRun);
+  }
+  Metronome &getMetronome() noexcept { return metronome; }
+
+  /** The editor tab last shown, so reopening the editor returns to it. */
+  int editorPage = 0;
   juce::String getLastIrError() const;
 
 private:
@@ -104,6 +114,8 @@ private:
   juce::AudioProcessorValueTreeState state;
   params::Snapshot snapshot;
   SignalChain chain;
+  Metronome metronome;
+  std::atomic<bool> metronomeRunning{false};
   PresetManager presets;
   CpuStats cpu;
   std::atomic<float> inputPeak{0.0f}, outputPeak{0.0f};

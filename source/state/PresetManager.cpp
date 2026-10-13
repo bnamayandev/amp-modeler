@@ -1,6 +1,7 @@
 #include "PresetManager.h"
 
 #include "EvilBinaryData.h"
+#include "Parameters.h"
 
 namespace evil {
 namespace {
@@ -75,6 +76,8 @@ PresetManager::capture(const juce::String &name) const {
   xml->setAttribute("name", name);
   for (auto *p : state.processor.getParameters())
     if (auto *ranged = dynamic_cast<juce::RangedAudioParameter *>(p)) {
+      if (params::isGlobal(ranged->getParameterID()))
+        continue;
       auto *e = xml->createNewChildElement(paramTag);
       e->setAttribute("id", ranged->getParameterID());
       e->setAttribute("value",
@@ -89,6 +92,8 @@ PresetManager::capture(const juce::String &name) const {
 void PresetManager::apply(const juce::XmlElement &preset) {
   for (auto *p : state.processor.getParameters())
     if (auto *ranged = dynamic_cast<juce::RangedAudioParameter *>(p)) {
+      if (params::isGlobal(ranged->getParameterID()))
+        continue; // the player's transpose and tempo survive a preset change
       float value = ranged->getDefaultValue(); // normalised
       for (auto *e : preset.getChildWithTagNameIterator(paramTag))
         if (e->getStringAttribute("id") == ranged->getParameterID())

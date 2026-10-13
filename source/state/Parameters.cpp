@@ -19,6 +19,33 @@ juce::NormalisableRange<float> range(float lo, float hi, float centre) {
   return r;
 }
 
+/** Unitless pedal knob shown 0-10, like the amp's tone. */
+juce::AudioParameterFloatAttributes zeroToTen() {
+  return juce::AudioParameterFloatAttributes().withStringFromValueFunction(
+      [](float v, int) { return juce::String(v * 10.0f, 1); });
+}
+
+juce::AudioParameterFloatAttributes percent() {
+  return juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction(
+      [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; });
+}
+
+void addUnit(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
+             const char *id, const juce::String &name, float defaultValue,
+             juce::AudioParameterFloatAttributes attributes = zeroToTen()) {
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{id, 1}, name,
+      juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f), defaultValue,
+      std::move(attributes)));
+}
+
+void addLevel(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
+              const char *id, const juce::String &name) {
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{id, 1}, name,
+      juce::NormalisableRange<float>(-12.0f, 12.0f, 0.01f), 0.0f, decibels()));
+}
+
 std::atomic<float> *raw(juce::AudioProcessorValueTreeState &s, const char *id) {
   auto *p = s.getRawParameterValue(id);
   jassert(p != nullptr);
@@ -65,7 +92,77 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   layout.add(std::make_unique<Float>(juce::ParameterID{output, 1}, "Output",
                                      range(-40.0f, 12.0f, 0.0f), 0.0f,
                                      decibels()));
+
+  layout.add(std::make_unique<juce::AudioParameterInt>(
+      juce::ParameterID{transpose, 1}, "Transpose",
+      -PitchShifter::maxSemitones, PitchShifter::maxSemitones, 0,
+      juce::AudioParameterIntAttributes().withLabel("st").withStringFromValueFunction(
+          [](int v, int) {
+            return (v > 0 ? "+" : "") + juce::String(v) + " st";
+          })));
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{compOn, 1}, "Compressor", false));
+  addUnit(layout, compSustain, "Comp Sustain", 0.5f);
+  addUnit(layout, compBlend, "Comp Blend", 1.0f, percent());
+  addLevel(layout, compLevel, "Comp Level");
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{fuzzOn, 1}, "Fuzz", false));
+  addUnit(layout, fuzzAmount, "Fuzz", 0.7f);
+  addUnit(layout, fuzzTone, "Fuzz Tone", 0.5f);
+  addLevel(layout, fuzzLevel, "Fuzz Level");
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{odOn, 1}, "Overdrive Pedal", false));
+  addUnit(layout, odDrive, "OD Drive", 0.5f);
+  addUnit(layout, odTone, "OD Tone", 0.5f);
+  addLevel(layout, odLevel, "OD Level");
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{chorusOn, 1}, "Chorus", false));
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{chorusRate, 1}, "Chorus Rate", range(0.1f, 8.0f, 1.0f), 0.8f,
+      juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction(
+          [](float v, int) { return juce::String(v, 2) + " Hz"; })));
+  addUnit(layout, chorusDepth, "Chorus Depth", 0.5f);
+  addUnit(layout, chorusMix, "Chorus Mix", 0.5f, percent());
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{delayOn, 1}, "Delay", false));
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{delayTime, 1}, "Delay Time",
+      range(20.0f, DelayPedal::maxTimeMs, 400.0f), 380.0f,
+      juce::AudioParameterFloatAttributes().withLabel("ms").withStringFromValueFunction(
+          [](float v, int) { return juce::String(juce::roundToInt(v)) + " ms"; })));
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{delayFeedback, 1}, "Delay Feedback",
+      juce::NormalisableRange<float>(0.0f, 0.95f, 0.001f), 0.35f, percent()));
+  addUnit(layout, delayMix, "Delay Mix", 0.35f, percent());
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{reverbOn, 1}, "Reverb", false));
+  addUnit(layout, reverbDecay, "Reverb Decay", 0.5f);
+  addUnit(layout, reverbTone, "Reverb Tone", 0.6f);
+  addUnit(layout, reverbMix, "Reverb Mix", 0.3f, percent());
+
+  const auto notAutomatable = [] {
+    return juce::AudioParameterFloatAttributes().withAutomatable(false);
+  };
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{metronomeBpm, 1}, "Metronome Tempo",
+      juce::NormalisableRange<float>(Metronome::minBpm, Metronome::maxBpm, 1.0f), 120.0f,
+      notAutomatable().withLabel("bpm").withStringFromValueFunction(
+          [](float v, int) { return juce::String(juce::roundToInt(v)) + " bpm"; })));
+  layout.add(std::make_unique<Choice>(
+      juce::ParameterID{metronomeBeats, 1}, "Metronome Signature",
+      juce::StringArray{"2/4", "3/4", "4/4", "5/4", "6/4", "7/4"}, 2,
+      juce::AudioParameterChoiceAttributes().withAutomatable(false)));
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{metronomeLevel, 1}, "Metronome Level",
+      juce::NormalisableRange<float>(-40.0f, 0.0f, 0.1f), -8.0f,
+      notAutomatable().withLabel("dB").withStringFromValueFunction(
+          [](float v, int) { return juce::String(v, 1) + " dB"; })));
   return layout;
+}
+
+bool isGlobal(const juce::String &id) {
+  return id == transpose || id == metronomeBpm || id == metronomeBeats ||
+         id == metronomeLevel;
 }
 
 Snapshot::Snapshot(juce::AudioProcessorValueTreeState &s)
@@ -75,7 +172,28 @@ Snapshot::Snapshot(juce::AudioProcessorValueTreeState &s)
       tone(raw(s, params::tone)), oversampling(raw(s, params::oversampling)),
       normalise(raw(s, params::normalise)), cabOn(raw(s, params::cabOn)),
       bass(raw(s, params::bass)), mid(raw(s, params::mid)),
-      treble(raw(s, params::treble)), output(raw(s, params::output)) {}
+      treble(raw(s, params::treble)), output(raw(s, params::output)),
+      transpose(raw(s, params::transpose)), compOn(raw(s, params::compOn)),
+      compSustain(raw(s, params::compSustain)),
+      compBlend(raw(s, params::compBlend)),
+      compLevel(raw(s, params::compLevel)), fuzzOn(raw(s, params::fuzzOn)),
+      fuzzAmount(raw(s, params::fuzzAmount)),
+      fuzzTone(raw(s, params::fuzzTone)), fuzzLevel(raw(s, params::fuzzLevel)),
+      odOn(raw(s, params::odOn)), odDrive(raw(s, params::odDrive)),
+      odTone(raw(s, params::odTone)), odLevel(raw(s, params::odLevel)),
+      chorusOn(raw(s, params::chorusOn)),
+      chorusRate(raw(s, params::chorusRate)),
+      chorusDepth(raw(s, params::chorusDepth)),
+      chorusMix(raw(s, params::chorusMix)), delayOn(raw(s, params::delayOn)),
+      delayTime(raw(s, params::delayTime)),
+      delayFeedback(raw(s, params::delayFeedback)),
+      delayMix(raw(s, params::delayMix)), reverbOn(raw(s, params::reverbOn)),
+      reverbDecay(raw(s, params::reverbDecay)),
+      reverbTone(raw(s, params::reverbTone)),
+      reverbMix(raw(s, params::reverbMix)),
+      metronomeBpm(raw(s, params::metronomeBpm)),
+      metronomeBeats(raw(s, params::metronomeBeats)),
+      metronomeLevel(raw(s, params::metronomeLevel)) {}
 
 SignalChain::Settings Snapshot::read() const noexcept {
   const auto get = [](const std::atomic<float> *p) {
@@ -96,6 +214,25 @@ SignalChain::Settings Snapshot::read() const noexcept {
   s.midDb = get(mid);
   s.trebleDb = get(treble);
   s.outputDb = get(output);
+
+  const auto on = [&](const std::atomic<float> *p) { return get(p) >= 0.5f; };
+  s.transposeSemitones = juce::roundToInt(get(transpose));
+  s.compressor = {on(compOn), get(compSustain), get(compBlend), get(compLevel)};
+  s.fuzz = {on(fuzzOn), get(fuzzAmount), get(fuzzTone), get(fuzzLevel)};
+  s.overdrive = {on(odOn), get(odDrive), get(odTone), get(odLevel)};
+  s.chorus = {on(chorusOn), get(chorusRate), get(chorusDepth), get(chorusMix)};
+  s.delay = {on(delayOn), get(delayTime), get(delayFeedback), get(delayMix)};
+  s.reverb = {on(reverbOn), get(reverbDecay), get(reverbTone), get(reverbMix)};
   return s;
+}
+
+Metronome::Settings Snapshot::readMetronome(bool running) const noexcept {
+  Metronome::Settings m;
+  m.running = running;
+  m.bpm = metronomeBpm->load(std::memory_order_relaxed);
+  m.beatsPerBar =
+      2 + juce::roundToInt(metronomeBeats->load(std::memory_order_relaxed));
+  m.levelDb = metronomeLevel->load(std::memory_order_relaxed);
+  return m;
 }
 } // namespace evil::params

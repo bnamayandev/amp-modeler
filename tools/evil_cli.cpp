@@ -13,6 +13,8 @@
 //   X
 //   --oversampling 0|1|2  --block N  --exact-tanh (default: NAM's fast tanh, as
 //   in the plugin)
+//   --transpose N (semitones)  --pedals comp,fuzz,od,chorus,delay,reverb|all
+//   (each at its default settings)
 //
 // `esr` runs the model alone (no gate, cab, EQ or normalisation) at the file's
 // sample rate, so a 44.1 kHz file exercises the resampling path, and compares
@@ -54,7 +56,8 @@ Options parse(int argc, char **argv) {
   static const juce::StringArray valued{
       "--model",     "--ir",       "--amp",          "--input-db",
       "--output-db", "--drive-db", "--oversampling", "--block",
-      "--seconds",   "--rate",     "--csv",          "--out"};
+      "--seconds",   "--rate",     "--csv",          "--out",
+      "--transpose", "--pedals"};
   Options o;
   for (int i = 2; i < argc; ++i) {
     const juce::String arg(argv[i]);
@@ -125,6 +128,17 @@ SignalChain::Settings settingsFrom(const Options &o) {
   s.amp.mode = amp == "off"         ? AmpMode::off
                : amp == "overdrive" ? AmpMode::overdrive
                                     : AmpMode::neural;
+  s.transposeSemitones = o.get("--transpose", "0").getIntValue();
+  const auto pedals = juce::StringArray::fromTokens(o.get("--pedals"), ",", "");
+  const auto pedal = [&](const char *name) {
+    return pedals.contains(name) || pedals.contains("all");
+  };
+  s.compressor.on = pedal("comp");
+  s.fuzz.on = pedal("fuzz");
+  s.overdrive.on = pedal("od");
+  s.chorus.on = pedal("chorus");
+  s.delay.on = pedal("delay");
+  s.reverb.on = pedal("reverb");
   return s;
 }
 

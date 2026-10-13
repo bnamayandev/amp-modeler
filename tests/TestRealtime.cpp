@@ -7,8 +7,8 @@
 using namespace evil;
 using namespace evil::test;
 
-TEST_CASE("The audio path never allocates or frees, even while models and IRs "
-          "are swapped",
+TEST_CASE("The audio path never allocates or frees, even while models, IRs "
+          "and pedals are swapped",
           "[realtime]") {
   const auto dir = juce::File::createTempFile("evil-rt");
   dir.createDirectory();
@@ -60,6 +60,14 @@ TEST_CASE("The audio path never allocates or frees, even while models and IRs "
       s.trebleDb = random.nextFloat() * 24.0f - 12.0f;
       s.inputDb = random.nextFloat() * 12.0f;
       s.amp.driveDb = random.nextFloat() * 40.0f;
+      s.transposeSemitones = random.nextInt(25) - 12;
+      for (auto *on : {&s.compressor.on, &s.fuzz.on, &s.overdrive.on,
+                       &s.chorus.on, &s.delay.on, &s.reverb.on})
+        *on = random.nextBool();
+      s.delay.timeMs = 20.0f + random.nextFloat() * 1980.0f;
+      s.delay.feedback = random.nextFloat() * 0.95f;
+      s.reverb.decay = random.nextFloat();
+      s.chorus.rateHz = 0.1f + random.nextFloat() * 7.9f;
     }
     if (b % 100 == 0)
       chain.getModels().collectGarbage();

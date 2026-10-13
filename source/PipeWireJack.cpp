@@ -1,5 +1,7 @@
 #include "PipeWireJack.h"
 
+#include <juce_core/juce_core.h> // defines JUCE_LINUX, tested below
+
 #if JUCE_LINUX && defined(JucePlugin_Build_Standalone) &&                     \
     JucePlugin_Build_Standalone
 #include <juce_audio_utils/juce_audio_utils.h>

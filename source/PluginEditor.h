@@ -2,6 +2,7 @@
 
 #include "PluginProcessor.h"
 #include "gui/EvilLookAndFeel.h"
+#include "gui/PedalBoard.h"
 #include "gui/Widgets.h"
 
 namespace evil {
@@ -15,10 +16,11 @@ public:
   void paint(juce::Graphics &) override;
   void resized() override;
 
-  static constexpr int designWidth = 980, designHeight = 600;
+  static constexpr int designWidth = 980, designHeight = 648;
+  static constexpr int headerHeight = 60, footerHeight = 48;
 
 private:
-  /** Everything is laid out once in a fixed 980x600 design space on this
+  /** Everything is laid out once in a fixed 980x648 design space on this
      canvas, which is then scaled uniformly to whatever size the host or window
      manager gives the editor. */
   struct Canvas final : juce::Component {
@@ -29,6 +31,7 @@ private:
   };
 
   void paintCanvas(juce::Graphics &);
+  void paintFooter(juce::Graphics &);
   void layoutCanvas();
 
   void timerCallback() override;
@@ -45,6 +48,11 @@ private:
   void showBuiltinIrs();
   void savePresetDialog();
   void stepPreset(int delta);
+  void showPage(int page);
+  void refreshPedalsTab();
+  void refreshMetronome();
+  void tapTempo();
+  void stepTranspose(int delta);
 
   EvilAmplifierProcessor &audioProcessor;
   gui::EvilLookAndFeel lookAndFeel;
@@ -52,25 +60,30 @@ private:
   juce::TooltipWindow tooltips{this, 600};
 
   // Header
+  juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"};
   juce::ComboBox presetBox;
-  juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"Save"};
-  juce::Label cpuLabel, latencyLabel;
+  juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"save"};
+
+  // Pages: the amp controls live on ampPage (laid out in canvas coordinates),
+  // the pedals on the board.
+  juce::Component ampPage;
+  gui::PedalBoard pedalBoard;
 
   // Input
   gui::Knob inputKnob, gateKnob;
-  juce::ToggleButton gateButton{"Gate"};
+  juce::ToggleButton gateButton{"gate"};
   juce::AudioProcessorValueTreeState::ButtonAttachment gateAttachment;
   gui::LevelMeter inputMeter;
 
   // Amp
-  juce::TextButton modeButtons[3]{juce::TextButton("Off"),
-                                  juce::TextButton("Overdrive"),
-                                  juce::TextButton("Neural")};
+  juce::TextButton modeButtons[3]{juce::TextButton("off"),
+                                  juce::TextButton("overdrive"),
+                                  juce::TextButton("neural")};
   std::unique_ptr<juce::ParameterAttachment> modeAttachment;
   juce::Label modelName, modelDetails;
-  juce::TextButton loadModelButton{"Load .nam..."},
-      builtinModelButton{"Built-in"}, unloadModelButton{"Unload"};
-  juce::ToggleButton normaliseButton{"Normalise level"};
+  juce::TextButton loadModelButton{"load .nam..."},
+      builtinModelButton{"built-in"}, unloadModelButton{"unload"};
+  juce::ToggleButton normaliseButton{"normalise level"};
   juce::AudioProcessorValueTreeState::ButtonAttachment normaliseAttachment;
   gui::Knob driveKnob, toneKnob;
   juce::Label oversamplingLabel;
@@ -79,16 +92,34 @@ private:
 
   // Cab
   juce::Label irName, irDetails;
-  juce::TextButton loadIrButton{"Load IR..."}, builtinIrButton{"Built-in"};
-  juce::ToggleButton cabButton{"Cabinet on"};
+  juce::TextButton loadIrButton{"load ir..."}, builtinIrButton{"built-in"};
+  juce::ToggleButton cabButton{"cabinet on"};
   juce::AudioProcessorValueTreeState::ButtonAttachment cabAttachment;
 
   // EQ + output
   gui::Knob bassKnob, midKnob, trebleKnob, outputKnob;
   gui::LevelMeter outputMeter;
 
+  // Footer: metronome, transposer, stats
+  juce::TextButton metronomeButton{"start"}, tapButton{"tap"};
+  juce::Slider bpmSlider{juce::Slider::LinearBar, juce::Slider::TextBoxLeft},
+      metronomeLevelSlider{juce::Slider::LinearBar, juce::Slider::TextBoxLeft};
+  juce::AudioProcessorValueTreeState::SliderAttachment bpmAttachment,
+      metronomeLevelAttachment;
+  juce::ComboBox beatsBox;
+  juce::AudioProcessorValueTreeState::ComboBoxAttachment beatsAttachment;
+  juce::TextButton transposeDown{"-"}, transposeUp{"+"};
+  juce::Label transposeLabel;
+  std::unique_ptr<juce::ParameterAttachment> transposeAttachment;
+  juce::Label cpuLabel, latencyLabel;
+
   juce::Rectangle<int> inputPanel, ampPanel, neuralArea, overdriveArea,
-      cabPanel, eqPanel, outputPanel;
+      cabPanel, eqPanel, outputPanel, metronomeCaption, beatLeds,
+      transposeCaption;
+  juce::Rectangle<float> gateLed;
+  std::vector<double> tapTimes;
+  std::uint32_t lastClickCount = 0;
+  double lastClickTime = 0.0;
   std::unique_ptr<juce::FileChooser> chooser;
   juce::File lastModelDirectory, lastIrDirectory;
   int textRefreshCounter = 0;

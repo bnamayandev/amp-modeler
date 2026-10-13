@@ -32,7 +32,20 @@ private:
   bool clipped = false;
 };
 
-/** A titled, rounded panel drawn behind a group of controls. */
-void drawPanel(juce::Graphics &g, juce::Rectangle<int> bounds,
-               const juce::String &title);
+/** Round stomp switch. Its toggle state is the pedal's on/off. */
+class Footswitch final : public juce::Button {
+public:
+  Footswitch() : juce::Button("footswitch") {}
+  void paintButton(juce::Graphics &, bool highlighted, bool down) override;
+};
+
+/** A small status light with a soft accent glow when lit. */
+void drawLed(juce::Graphics &g, juce::Rectangle<float> led, bool lit,
+             juce::Colour colour);
+
+/** A rounded panel drawn behind a group of controls, headed by its number in
+    the signal chain (omitted if 0), a pill-tag title and a rule. Returns the rule's row, so
+    callers can put an indicator at its end. */
+juce::Rectangle<float> drawPanel(juce::Graphics &g, juce::Rectangle<int> bounds,
+                                 int number, const juce::String &title);
 } // namespace evil::gui

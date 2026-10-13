@@ -60,6 +60,7 @@ void EvilAmplifierProcessor::prepareToPlay(double sampleRate,
   currentSampleRate = sampleRate;
   const int maxBlock = juce::jmax(1, samplesPerBlock);
   chain.prepare(sampleRate, maxBlock);
+  metronome.prepare(sampleRate);
 
   bypassDelay.setSize(2, bypassDelayCapacity);
   bypassDelay.clear();
@@ -118,6 +119,7 @@ void EvilAmplifierProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     inputPeak.store(inPeak, std::memory_order_relaxed);
 
   chain.process(mono, n, snapshot.read());
+  metronome.process(mono, n, snapshot.readMetronome(metronomeRunning.load()));
 
   // Never pass non-finite samples to the host (or to someone's ears).
   for (int i = 0; i < n; ++i)

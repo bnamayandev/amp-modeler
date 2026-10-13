@@ -53,6 +53,10 @@ juce_add_binary_data(EvilAmplifierData
     HEADER_NAME EvilBinaryData.h
     NAMESPACE EvilBinaryData
     SOURCES
+        resources/fonts/Inter-Regular.ttf
+        resources/fonts/Inter-Medium.ttf
+        resources/fonts/JetBrainsMono-Regular.ttf
+        resources/fonts/JetBrainsMono-Medium.ttf
         resources/irs/EvilCab4x12.wav
         resources/models/BlackstarHT1.nam
         resources/presets/factory_presets.xml)
@@ -64,9 +68,13 @@ add_library(evil_core INTERFACE)
 target_sources(evil_core INTERFACE
     source/dsp/AmpStage.cpp
     source/dsp/CabSim.cpp
+    source/dsp/Metronome.cpp
     source/dsp/ModelManager.cpp
     source/dsp/NamModelRunner.cpp
     source/dsp/Overdrive.cpp
+    source/dsp/Pedals.cpp
+    source/dsp/PitchShifter.cpp
+    source/dsp/ReverbPedal.cpp
     source/dsp/SignalChain.cpp
     source/dsp/StreamingResampler.cpp
     source/state/Parameters.cpp
@@ -111,6 +119,7 @@ target_sources(EvilAmplifier PRIVATE
     source/PluginEditor.cpp
     source/PipeWireJack.cpp
     source/gui/EvilLookAndFeel.cpp
+    source/gui/PedalBoard.cpp
     source/gui/Widgets.cpp)
 target_compile_definitions(EvilAmplifier PUBLIC ${EVIL_JUCE_DEFINITIONS})
 target_link_libraries(EvilAmplifier
@@ -147,6 +156,7 @@ if(EVIL_BUILD_TOOLS)
         source/PluginEditor.cpp
         source/PipeWireJack.cpp
         source/gui/EvilLookAndFeel.cpp
+        source/gui/PedalBoard.cpp
         source/gui/Widgets.cpp)
     target_compile_definitions(evil-snapshot PRIVATE
         ${EVIL_JUCE_DEFINITIONS}

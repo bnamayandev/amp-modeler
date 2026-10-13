@@ -9,8 +9,8 @@ Knob::Knob(juce::AudioProcessorValueTreeState &state,
              juce::Slider::TextBoxBelow),
       attachment(state, parameterId, slider) {
   title.setText(titleText.toUpperCase(), juce::dontSendNotification);
-  title.setFont(uiFont(12.0f, true));
-  title.setColour(juce::Label::textColourId, colours::textDim);
+  title.setFont(caption());
+  title.setColour(juce::Label::textColourId, colours::muted);
   title.setJustificationType(juce::Justification::centred);
   title.setInterceptsMouseClicks(false, false);
   addAndMakeVisible(title);
@@ -51,14 +51,18 @@ void LevelMeter::pushPeak(float peakGain, float secondsSinceLast) {
 void LevelMeter::paint(juce::Graphics &g) {
   constexpr float minDb = -60.0f, maxDb = 6.0f;
   auto bounds = getLocalBounds().toFloat();
-  const auto clipLed = bounds.removeFromTop(6.0f);
-  bounds.removeFromTop(3.0f);
+  const auto clipLed = bounds.removeFromTop(4.0f);
+  bounds.removeFromTop(5.0f);
 
-  g.setColour(clipped ? colours::accent : colours::control);
+  if (clipped) {
+    g.setColour(colours::accent.withAlpha(0.35f));
+    g.fillRoundedRectangle(clipLed.expanded(2.0f), 3.0f);
+  }
+  g.setColour(clipped ? colours::accent : colours::lineSoft);
   g.fillRoundedRectangle(clipLed, 2.0f);
 
-  g.setColour(colours::control);
-  g.fillRoundedRectangle(bounds, 3.0f);
+  g.setColour(colours::lineSoft);
+  g.fillRoundedRectangle(bounds, 2.0f);
 
   const auto toY = [&](float db) {
     return juce::jmap(juce::jlimit(minDb, maxDb, db), minDb, maxDb,
@@ -66,31 +70,102 @@ void LevelMeter::paint(juce::Graphics &g) {
   };
   const auto top = toY(levelDb);
   if (top < bounds.getBottom()) {
-    juce::ColourGradient fill(colours::accent, 0.0f, toY(0.0f), colours::good,
-                              0.0f, toY(-30.0f), false);
-    fill.addColour(0.5, colours::warn);
+    // Neutral up to -6 dBFS; only the hot zone uses the accent.
+    juce::ColourGradient fill(colours::mutedSoft, 0.0f, bounds.getBottom(),
+                              colours::text, 0.0f, toY(-6.0f), false);
     g.setGradientFill(fill);
-    g.fillRoundedRectangle(bounds.withTop(top), 3.0f);
+    const auto bar = bounds.withTop(top);
+    g.fillRoundedRectangle(bar, 2.0f);
+    const auto hot = bar.withBottom(juce::jmax(bar.getY(), toY(-6.0f)));
+    if (!hot.isEmpty()) {
+      g.setColour(colours::accent);
+      g.fillRect(hot);
+    }
   }
 
-  g.setColour(colours::background.withAlpha(0.8f));
+  g.setColour(colours::panel);
   for (float db : {0.0f, -12.0f, -24.0f, -36.0f, -48.0f})
     g.fillRect(bounds.getX(), toY(db), bounds.getWidth(), 1.0f);
 }
 
-void drawPanel(juce::Graphics &g, juce::Rectangle<int> bounds,
-               const juce::String &title) {
-  const auto b = bounds.toFloat();
-  g.setColour(colours::panel);
-  g.fillRoundedRectangle(b, 8.0f);
-  g.setColour(colours::panelEdge);
-  g.drawRoundedRectangle(b.reduced(0.5f), 8.0f, 1.0f);
+void Footswitch::paintButton(juce::Graphics &g, bool highlighted, bool down) {
+  using namespace colours;
+  const bool on = getToggleState();
+  const auto size =
+      (float)juce::jmin(getWidth(), getHeight()) - 2.0f;
+  const auto outer =
+      juce::Rectangle<float>(size, size).withCentre(getLocalBounds().toFloat().getCentre());
 
-  g.setColour(colours::accent);
-  g.fillRect(b.getX() + 14.0f, b.getY() + 15.0f, 3.0f, 12.0f);
-  g.setColour(colours::text);
-  g.setFont(uiFont(13.0f, true));
-  g.drawText(title.toUpperCase(), bounds.getX() + 23, bounds.getY() + 10,
-             bounds.getWidth() - 40, 22, juce::Justification::centredLeft);
+  // Hairline bezel, accent when engaged.
+  g.setColour(on ? colours::accent.withAlpha(highlighted ? 0.9f : 0.7f)
+              : highlighted ? muted.withAlpha(0.7f)
+                            : line);
+  g.drawEllipse(outer.reduced(0.5f), 1.0f);
+
+  // The cap: paper colour with a soft top light, pressed in while held.
+  const auto cap = outer.reduced(size * (down ? 0.2f : 0.17f));
+  g.setGradientFill(juce::ColourGradient(
+      background.brighter(down ? 0.04f : 0.12f), cap.getCentreX(), cap.getY(),
+      background.darker(0.2f), cap.getCentreX(), cap.getBottom(), false));
+  g.fillEllipse(cap);
+  g.setColour(highlighted ? muted.withAlpha(0.6f) : line);
+  g.drawEllipse(cap.reduced(0.5f), 1.0f);
+}
+
+void drawLed(juce::Graphics &g, juce::Rectangle<float> led, bool lit,
+             juce::Colour colour) {
+  if (lit) {
+    g.setGradientFill(juce::ColourGradient(
+        colour.withAlpha(0.55f), led.getCentre(), colour.withAlpha(0.0f),
+        led.getCentre().translated(led.getWidth() * 1.25f, 0.0f), true));
+    g.fillEllipse(led.expanded(led.getWidth() * 0.75f));
+  }
+  g.setColour(lit ? colour : colours::lineSoft);
+  g.fillEllipse(led);
+  if (!lit) {
+    g.setColour(colours::line);
+    g.drawEllipse(led.reduced(0.5f), 1.0f);
+  }
+}
+
+juce::Rectangle<float> drawPanel(juce::Graphics &g, juce::Rectangle<int> bounds,
+                                 int number, const juce::String &title) {
+  using namespace colours;
+  const auto b = bounds.toFloat();
+  g.setColour(panel);
+  g.fillRoundedRectangle(b, 10.0f);
+  g.setColour(line);
+  g.drawRoundedRectangle(b.reduced(0.5f), 10.0f, 1.0f);
+
+  // Section header:  01  [ title ]  ------------------------------
+  auto row = b.reduced(16.0f, 0.0f).withTop(b.getY() + 14.0f).withHeight(20.0f);
+  if (number > 0) {
+    const auto numberFont = mono(11.0f);
+    const auto numberText = juce::String(number).paddedLeft('0', 2);
+    g.setFont(numberFont);
+    g.setColour(accent);
+    g.drawText(numberText,
+               row.removeFromLeft(juce::GlyphArrangement::getStringWidth(
+                                      numberFont, numberText) +
+                                  1.0f),
+               juce::Justification::centredLeft, false);
+    row.removeFromLeft(10.0f);
+  }
+
+  const auto titleFont = mono(10.5f, true, 0.1f);
+  const auto titleText = title.toLowerCase();
+  const auto pill = row.removeFromLeft(
+      juce::GlyphArrangement::getStringWidth(titleFont, titleText) + 18.0f);
+  g.setColour(accent.withAlpha(0.28f));
+  g.fillRect(pill);
+  g.setColour(text);
+  g.setFont(titleFont);
+  g.drawText(titleText, pill.withTrimmedLeft(9.0f),
+             juce::Justification::centredLeft, false);
+  row.removeFromLeft(12.0f);
+
+  g.setColour(line);
+  g.fillRect(row.withSizeKeepingCentre(row.getWidth(), 1.0f));
+  return row;
 }
 } // namespace evil::gui

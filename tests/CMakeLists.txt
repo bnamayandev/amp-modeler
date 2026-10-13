@@ -4,6 +4,7 @@ target_sources(evil_tests PRIVATE
     AllocationTracker.cpp
     TestMain.cpp
     TestDsp.cpp
+    TestPedals.cpp
     TestResampler.cpp
     TestNam.cpp
     TestRealtime.cpp)

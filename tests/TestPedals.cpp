@@ -1,0 +1,399 @@
+#include "TestHelpers.h"
+#include "dsp/Metronome.h"
+#include "dsp/SignalChain.h"
+#include "state/Parameters.h"
+#include "state/PresetManager.h"
+
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
+
+using namespace evil;
+using namespace evil::test;
+
+namespace {
+constexpr double rate = 48000.0;
+constexpr int block = 128;
+
+SignalChain::Settings neutral() {
+  SignalChain::Settings s;
+  s.gateOn = false;
+  s.amp.mode = AmpMode::off;
+  s.cabOn = false;
+  return s;
+}
+
+void run(SignalChain &chain, std::vector<float> &x,
+         const SignalChain::Settings &s) {
+  for (size_t start = 0; start < x.size(); start += (size_t)block)
+    chain.process(x.data() + start,
+                  (int)std::min<size_t>((size_t)block, x.size() - start), s);
+}
+
+/** Magnitude of x at one frequency (Goertzel), over [from, from + count). */
+double magnitudeAt(const std::vector<float> &x, size_t from, size_t count,
+                   double freq) {
+  const double w = 2.0 * juce::MathConstants<double>::pi * freq / rate;
+  const double c = 2.0 * std::cos(w);
+  double s1 = 0.0, s2 = 0.0;
+  for (size_t i = from; i < from + count; ++i) {
+    const double s0 = x[i] + c * s1 - s2;
+    s2 = s1;
+    s1 = s0;
+  }
+  return std::sqrt(s1 * s1 + s2 * s2 - c * s1 * s2) / (double)count;
+}
+
+double dominantFrequency(const std::vector<float> &x, size_t from,
+                         size_t count, double lo, double hi) {
+  double best = lo, bestMag = -1.0;
+  for (double f = lo; f <= hi; f += 0.5)
+    if (const double m = magnitudeAt(x, from, count, f); m > bestMag) {
+      bestMag = m;
+      best = f;
+    }
+  return best;
+}
+
+double rmsDb(const std::vector<float> &x, size_t from, size_t to) {
+  return juce::Decibels::gainToDecibels(rms(x.data() + from, (int)(to - from)),
+                                        -200.0);
+}
+
+float maxStep(const std::vector<float> &x, size_t from, size_t to) {
+  float m = 0.0f;
+  for (size_t i = from + 1; i < to; ++i)
+    m = std::max(m, std::abs(x[i] - x[i - 1]));
+  return m;
+}
+} // namespace
+
+TEST_CASE("The transposer shifts pitch by the requested interval",
+          "[pedals][transpose]") {
+  const int semitones = GENERATE(-12, -5, -1, 2, 7, 12);
+  SignalChain chain;
+  chain.prepare(rate, block);
+  auto s = neutral();
+  s.transposeSemitones = semitones;
+
+  auto x = sine(220.0, rate, (int)rate * 2, 0.4f);
+  run(chain, x, s);
+
+  const double expected = 220.0 * std::exp2(semitones / 12.0);
+  const double found =
+      dominantFrequency(x, (size_t)rate / 2, (size_t)rate, 80.0, 500.0 * 2);
+  INFO(semitones << " st: expected " << expected << " Hz, found " << found);
+  CHECK(std::abs(found - expected) < 1.5);
+  // The original pitch is gone, not just outweighed.
+  CHECK(magnitudeAt(x, (size_t)rate / 2, (size_t)rate, 220.0) <
+        0.1 * magnitudeAt(x, (size_t)rate / 2, (size_t)rate, expected));
+}
+
+TEST_CASE("The transposer shifts chords, not just single notes",
+          "[pedals][transpose]") {
+  SignalChain chain;
+  chain.prepare(rate, block);
+  auto s = neutral();
+  s.transposeSemitones = 5;
+  auto x = sine(196.0, rate, (int)rate * 2, 0.25f); // G3 + D4
+  const auto d = sine(293.66, rate, (int)rate * 2, 0.25f);
+  for (size_t i = 0; i < x.size(); ++i)
+    x[i] += d[i];
+  run(chain, x, s);
+
+  const auto at = [&](double f) {
+    return magnitudeAt(x, (size_t)rate / 2, (size_t)rate, f);
+  };
+  const double up = std::exp2(5.0 / 12.0);
+  for (double f : {196.0, 293.66}) {
+    INFO(f << " Hz -> " << f * up << " Hz: " << at(f * up) << " vs " << at(f));
+    CHECK(at(f * up) > 0.06); // both notes come through near full level
+    CHECK(at(f) < 0.2 * at(f * up));
+  }
+}
+
+TEST_CASE("Pedals switched on and off again return to a bit-exact pass-through",
+          "[pedals]") {
+  SignalChain chain;
+  chain.prepare(rate, block);
+  juce::Random random(11);
+  std::vector<float> x((size_t)rate);
+  for (auto &v : x)
+    v = random.nextFloat() * 0.6f - 0.3f;
+
+  auto s = neutral();
+  s.transposeSemitones = 3;
+  s.compressor.on = s.fuzz.on = s.overdrive.on = true;
+  s.chorus.on = s.delay.on = s.reverb.on = true;
+  auto y = x;
+  run(chain, y, s);
+  for (float v : y)
+    REQUIRE(std::isfinite(v));
+  CHECK(y != x);
+
+  // After the 10 ms footswitch fades, everything off is exact again.
+  auto off = neutral();
+  std::vector<float> fade((size_t)rate / 20, 0.0f);
+  run(chain, fade, off);
+  y = x;
+  run(chain, y, off);
+  CHECK(y == x);
+}
+
+TEST_CASE("Footswitching modulation and ambience pedals does not click",
+          "[pedals]") {
+  SignalChain chain;
+  chain.prepare(rate, block);
+  auto x = sine(196.0, rate, (int)rate * 2, 0.3f);
+  const float signalStep = maxStep(x, 0, x.size());
+
+  auto s = neutral();
+  for (size_t start = 0, b = 0; start < x.size(); start += block, ++b) {
+    // Toggle a different pedal every ~107 ms.
+    if (b % 40 == 20) {
+      switch ((b / 40) % 4) {
+      case 0: s.compressor.on = !s.compressor.on; break;
+      case 1: s.chorus.on = !s.chorus.on; break;
+      case 2: s.delay.on = !s.delay.on; break;
+      default: s.reverb.on = !s.reverb.on; break;
+      }
+    }
+    chain.process(x.data() + start, block, s);
+  }
+  // A click is a jump far above the signal's own slope.
+  CHECK(maxStep(x, 0, x.size()) < 4.0f * signalStep);
+}
+
+TEST_CASE("The delay repeats at the set time and feedback decays",
+          "[pedals][delay]") {
+  DelayPedal delay;
+  delay.prepare(rate);
+  DelayPedal::Settings s;
+  s.on = true;
+  s.timeMs = 250.0f;
+  s.feedback = 0.5f;
+  s.mix = 1.0f;
+
+  std::vector<float> x((size_t)rate, 0.0f);
+  x[0] = 0.5f;
+  delay.process(x.data(), (int)x.size(), s);
+
+  const auto peakNear = [&](size_t centre) {
+    size_t at = centre - 50;
+    for (size_t i = centre - 50; i < centre + 50; ++i)
+      if (std::abs(x[i]) > std::abs(x[at]))
+        at = i;
+    return at;
+  };
+  CHECK(std::abs((int)peakNear(12000) - 12000) <= 1);
+  CHECK(std::abs((int)peakNear(24000) - 24000) <= 2);
+  // The loop filters smear later repeats, so compare energy, not peaks.
+  const auto energy = [&](size_t centre) {
+    double e = 0.0;
+    for (size_t i = centre - 100; i < centre + 100; ++i)
+      e += (double)x[i] * x[i];
+    return e;
+  };
+  const double ratio = energy(24000) / energy(12000);
+  INFO("second / first echo energy " << ratio);
+  CHECK(ratio > 0.02);
+  CHECK(ratio < 0.25); // feedback 0.5 is at most a quarter of the energy
+  // Nothing between the dry impulse and the first echo.
+  for (size_t i = 10; i < 11900; ++i)
+    REQUIRE(std::abs(x[i]) < 1.0e-4f);
+}
+
+TEST_CASE("Maximum delay feedback and reverb decay stay bounded",
+          "[pedals]") {
+  SignalChain chain;
+  chain.prepare(rate, block);
+  auto s = neutral();
+  s.delay = {true, 120.0f, 0.95f, 1.0f};
+  s.reverb = {true, 1.0f, 1.0f, 1.0f};
+  juce::Random random(5);
+  std::vector<float> x((size_t)rate * 20);
+  for (auto &v : x)
+    v = random.nextFloat() * 1.6f - 0.8f;
+  run(chain, x, s);
+  float peak = 0.0f;
+  for (float v : x) {
+    REQUIRE(std::isfinite(v));
+    peak = std::max(peak, std::abs(v));
+  }
+  INFO("peak " << peak);
+  CHECK(peak < 8.0f);
+}
+
+TEST_CASE("The reverb tail decays, and lasts longer with more decay",
+          "[pedals][reverb]") {
+  const auto tailDb = [](float decay) {
+    ReverbPedal reverb;
+    reverb.prepare(rate);
+    // The impulse comes after the 10 ms input fade-in a fresh reverb applies.
+    std::vector<float> x((size_t)rate * 3, 0.0f);
+    x[960] = 1.0f;
+    reverb.process(x.data(), (int)x.size(), {true, decay, 0.6f, 1.0f});
+    for (float v : x)
+      REQUIRE(std::isfinite(v));
+    return std::pair{rmsDb(x, 2400, 24000), rmsDb(x, 48000, 72000)};
+  };
+  const auto [shortEarly, shortLate] = tailDb(0.2f);
+  const auto [longEarly, longLate] = tailDb(0.9f);
+  INFO("short " << shortEarly << " -> " << shortLate << " dB, long "
+                << longEarly << " -> " << longLate << " dB");
+  CHECK(shortLate < shortEarly - 20.0);
+  CHECK(longLate < longEarly);
+  CHECK(longLate > shortLate + 15.0);
+  CHECK(shortEarly > -60.0); // it is audible at all
+  CHECK(longEarly > -60.0);
+}
+
+TEST_CASE("The compressor narrows the gap between loud and quiet playing",
+          "[pedals][compressor]") {
+  CompressorPedal comp;
+  comp.prepare(rate);
+  auto x = sine(196.0, rate, (int)rate * 2, 0.5f);
+  for (size_t i = (size_t)rate; i < x.size(); ++i)
+    x[i] *= 0.1f; // 20 dB quieter for the second second
+  const double inGap = rmsDb(x, 24000, 48000) - rmsDb(x, 72000, 96000);
+  comp.process(x.data(), (int)x.size(), {true, 0.8f, 1.0f, 0.0f});
+  const double outGap = rmsDb(x, 24000, 48000) - rmsDb(x, 72000, 96000);
+  INFO("in gap " << inGap << " dB, out gap " << outGap << " dB");
+  CHECK(inGap == Catch::Approx(20.0).margin(0.1));
+  CHECK(outGap < 10.0);
+  CHECK(comp.getGainReductionDb() > 0.0f);
+}
+
+TEST_CASE("Drive pedals stay bounded and near unity level at their defaults",
+          "[pedals]") {
+  const auto measure = [](auto &pedal, auto settings, float amplitude) {
+    pedal.prepare(rate);
+    auto x = sine(196.0, rate, (int)rate, amplitude);
+    const double in = rmsDb(x, 4800, x.size());
+    pedal.process(x.data(), (int)x.size(), settings);
+    float peak = 0.0f;
+    for (float v : x) {
+      REQUIRE(std::isfinite(v));
+      peak = std::max(peak, std::abs(v));
+    }
+    return std::pair{rmsDb(x, 4800, x.size()) - in, peak};
+  };
+  FuzzPedal fuzz;
+  OverdrivePedal od;
+  FuzzPedal::Settings fuzzOn;
+  fuzzOn.on = true;
+  OverdrivePedal::Settings odOn;
+  odOn.on = true;
+
+  for (float amplitude : {0.05f, 0.2f, 1.0f}) {
+    const auto [fuzzGain, fuzzPeak] = measure(fuzz, fuzzOn, amplitude);
+    const auto [odGain, odPeak] = measure(od, odOn, amplitude);
+    INFO("input " << amplitude << ": fuzz " << fuzzGain << " dB (peak "
+                  << fuzzPeak << "), overdrive " << odGain << " dB (peak "
+                  << odPeak << ")");
+    CHECK(fuzzPeak < 1.0f);
+    CHECK(odPeak < 1.2f);
+    if (amplitude == 0.2f) { // typical DI level
+      CHECK(std::abs(fuzzGain) < 6.0);
+      CHECK(std::abs(odGain) < 6.0);
+    }
+  }
+}
+
+TEST_CASE("The metronome clicks on the beat and accents the bar",
+          "[metronome]") {
+  Metronome metronome;
+  metronome.prepare(rate);
+  Metronome::Settings s;
+  s.running = true;
+  s.bpm = 120.0f;
+  s.beatsPerBar = 3;
+
+  std::vector<float> x((size_t)rate * 3, 0.0f);
+  for (size_t start = 0; start < x.size(); start += block)
+    metronome.process(x.data() + start, block, s);
+
+  // Onsets: first non-silent sample after a gap.
+  std::vector<size_t> onsets;
+  for (size_t i = 0; i < x.size(); ++i)
+    if (std::abs(x[i]) > 1.0e-6f &&
+        (onsets.empty() || i > onsets.back() + 4000))
+      onsets.push_back(i);
+  REQUIRE(onsets.size() == 6); // 3 s at 120 bpm
+  for (size_t k = 0; k < onsets.size(); ++k)
+    CHECK(std::abs((long)onsets[k] - (long)(k * 24000)) <= 1);
+
+  const auto clickPeak = [&](size_t onset) {
+    float m = 0.0f;
+    for (size_t i = onset; i < onset + 1000; ++i)
+      m = std::max(m, std::abs(x[i]));
+    return m;
+  };
+  CHECK(clickPeak(onsets[0]) > clickPeak(onsets[1])); // beat one of the bar
+  CHECK(clickPeak(onsets[3]) > clickPeak(onsets[2]));
+  CHECK(metronome.getClickCount() == 6);
+
+  // Stopped: the signal passes untouched once the last click has finished.
+  s.running = false;
+  std::vector<float> y((size_t)rate / 2, 0.25f);
+  metronome.process(y.data(), (int)y.size(), s);
+  for (size_t i = 2400; i < y.size(); ++i)
+    REQUIRE(y[i] == 0.25f);
+  CHECK(metronome.getBeatInBar() == -1);
+}
+
+namespace {
+/** Just enough of a processor to hold the plugin's parameters. */
+struct ParameterHost final : juce::AudioProcessor {
+  juce::AudioProcessorValueTreeState state{*this, nullptr, "EvilAmplifier",
+                                           params::createLayout()};
+  const juce::String getName() const override { return "test"; }
+  void prepareToPlay(double, int) override {}
+  void releaseResources() override {}
+  void processBlock(juce::AudioBuffer<float> &, juce::MidiBuffer &) override {}
+  double getTailLengthSeconds() const override { return 0.0; }
+  bool acceptsMidi() const override { return false; }
+  bool producesMidi() const override { return false; }
+  juce::AudioProcessorEditor *createEditor() override { return nullptr; }
+  bool hasEditor() const override { return false; }
+  int getNumPrograms() override { return 1; }
+  int getCurrentProgram() override { return 0; }
+  void setCurrentProgram(int) override {}
+  const juce::String getProgramName(int) override { return {}; }
+  void changeProgramName(int, const juce::String &) override {}
+  void getStateInformation(juce::MemoryBlock &) override {}
+  void setStateInformation(const void *, int) override {}
+
+  void set(const char *id, float value) {
+    auto *p = state.getParameter(id);
+    p->setValueNotifyingHost(p->convertTo0to1(value));
+  }
+  float get(const char *id) { return state.getRawParameterValue(id)->load(); }
+};
+} // namespace
+
+TEST_CASE("Presets set the pedals but leave transpose and the metronome alone",
+          "[presets]") {
+  ParameterHost host;
+  PresetManager presets(
+      host.state, [] { return PresetManager::Sources{}; },
+      [](const PresetManager::Sources &) {});
+  host.set(params::transpose, -2.0f);
+  host.set(params::metronomeBpm, 90.0f);
+  host.set(params::reverbOn, 1.0f);
+
+  const int fuzzLead = presets.getNames().indexOf("Fuzz Lead");
+  REQUIRE(fuzzLead >= 0);
+  REQUIRE(presets.load(fuzzLead));
+  CHECK(host.get(params::fuzzOn) == 1.0f);
+  CHECK(host.get(params::delayTime) == Catch::Approx(420.0f));
+  CHECK(host.get(params::chorusOn) == 0.0f); // not in the preset: default
+  CHECK(host.get(params::transpose) == -2.0f);
+  CHECK(host.get(params::metronomeBpm) == 90.0f);
+
+  REQUIRE(presets.load(0)); // the default preset turns every pedal off
+  for (auto *id : {params::compOn, params::fuzzOn, params::odOn,
+                   params::chorusOn, params::delayOn, params::reverbOn})
+    CHECK(host.get(id) == 0.0f);
+  CHECK(host.get(params::transpose) == -2.0f);
+}

@@ -8,10 +8,13 @@ trainer, and it loads any [Neural Amp Modeler](https://www.neuralampmodeler.com)
 ![Evil Amplifier](docs/screenshot.png)
 
 ```
-guitar ─► input gain ─► noise gate ─► AMP ─────────────────────────► cab IR ─► 3-band EQ ─► output
-                                      ├─ Neural: NAM model at its trained rate
-                                      │  (band-limited resampling if the host differs)
-                                      └─ Overdrive: drive ─► [2x/4x oversampled tanh] ─► tone
+guitar ─► input gain ─► noise gate ─► transposer ─► compressor ─► fuzz ─► overdrive ─┐
+                                                                                     │
+  ┌──────────────────────────────────────────────────────────────────────────────────┘
+  └─► AMP ─────────────────────────► cab IR ─► 3-band EQ ─► chorus ─► delay ─► reverb ─► output
+      ├─ Neural: NAM model at its trained rate                                  (+ metronome)
+      │  (band-limited resampling if the host differs)
+      └─ Overdrive: drive ─► [2x/4x oversampled tanh] ─► tone
 ```
 
 ## Measured results
@@ -76,9 +79,28 @@ plugin where your DAW looks:
   first channel of stereo, up to 2 s). IRs are energy-normalised and swap without clicks.
   Turn it off for models that already include a cab (mic'd captures).
 - **EQ**: bass shelf 100 Hz, mid peak 800 Hz, treble shelf 3.2 kHz, ±12 dB.
-- **Presets**: six factory presets (also exposed as host programs). **Save** writes user
+- **Pedals** (the *pedals* tab; its label counts the pedals that are on): compressor, fuzz and
+  overdrive go before the amp; chorus, delay and reverb after the cab, like an effects loop.
+  Click a footswitch to turn a pedal on; switching crossfades over 10 ms, and a pedal that's
+  off is skipped entirely (bit-exact pass-through, no CPU).
+  - *Compressor*: Sustain (threshold and ratio together), Blend (parallel compression),
+    Level. *Fuzz*: hard clipper with a scooped tone sweep. *Overdrive*: mid-hump screamer
+    style; low drive and high level tightens the neural amp.
+  - *Chorus*: Rate, Depth, Mix. *Delay*: 20 ms to 2 s; turning Time glides like a tape echo
+    and repeats get darker. *Reverb*: Dattorro plate. Delay and reverb add their wet signal
+    on top of an unchanged dry signal.
+  - All six pedals and the transposer together add ~0.3% of the block deadline
+    (`evil-cli bench --pedals all --transpose -2`).
+- **Transpose** (bottom right): ±12 semitones, e.g. -1 for E-flat tuning. Polyphonic, with
+  splices aligned to the waveform; it costs ~16 ms of delay while on, and 0 ("off") bypasses
+  it completely.
+- **Metronome** (bottom left): start/stop, tempo (drag, or double-click to type), **tap**
+  (each tap also restarts the bar), beats per bar (beat one clicks higher) and level. The
+  click is mixed into the output. It always starts stopped.
+- **Presets**: nine factory presets (also exposed as host programs). **Save** writes user
   presets to `~/.config/EvilAmplifier/Presets` (Linux), `~/Library/EvilAmplifier/Presets`
-  (macOS) or `%APPDATA%\EvilAmplifier\Presets` (Windows).
+  (macOS) or `%APPDATA%\EvilAmplifier\Presets` (Windows). Presets
+  include the pedals but not the transposer or metronome settings, which stay as you set them.
 - **Log**: model loads, latency changes and CPU per block (every 30 s while playing) go to
   `EvilAmplifier.log` in `~/.config/EvilAmplifier/` (Linux), `~/Library/Logs/EvilAmplifier/`
   (macOS) or `%APPDATA%\EvilAmplifier\` (Windows).
@@ -219,9 +241,10 @@ Nyquist). A FIFO of computed size guarantees exactly one output sample per input
 
 ```
 source/dsp/        SignalChain, AmpStage, ModelManager, NamModelRunner, StreamingResampler,
-                   Overdrive, CabSim, Equaliser, NoiseGate, Biquad
+                   Overdrive, CabSim, Equaliser, NoiseGate, Biquad, Pedals, ReverbPedal,
+                   PitchShifter, Metronome, DelayLine
 source/state/      parameters, presets
-source/gui/        look and feel, knobs, meters
+source/gui/        look and feel, knobs, meters, pedal board
 source/            PluginProcessor, PluginEditor
 resources/         bundled model (+ training report), synthetic cab IR, factory presets
 tests/             Catch2 suite, allocation tracker, parity data

@@ -3,9 +3,9 @@
 //
 //   evil-snapshot <output-directory>
 //
-// Writes editor.png (default size), editor@1.5x.png, and stretched.png, which
+// Writes editor.png (default size), editor@1.5x.png, stretched.png, which
 // simulates a window manager forcing the window to an odd size, to check the
-// layout scales uniformly.
+// layout scales uniformly, and pedals.png: the pedal page with a few pedals on.
 
 #include "PluginEditor.h"
 
@@ -53,6 +53,17 @@ int main(int argc, char **argv) {
   std::cout << "asked for 940x970, constrained to " << editor->getWidth() << "x"
             << editor->getHeight() << std::endl;
   ok = save(*editor, dir.getChildFile("stretched.png"), 1.0f) && ok;
+
+  editor.reset();
+
+  for (auto *id : {evil::params::odOn, evil::params::delayOn,
+                   evil::params::reverbOn})
+    processor.getState().getParameter(id)->setValueNotifyingHost(1.0f);
+  auto *transpose = processor.getState().getParameter(evil::params::transpose);
+  transpose->setValueNotifyingHost(transpose->convertTo0to1(-1.0f));
+  processor.editorPage = 1;
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("pedals.png"), 1.5f) && ok;
 
   editor.reset();
   processor.releaseResources();

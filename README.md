@@ -81,17 +81,25 @@ plugin where your DAW looks:
 - **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz, ±12 dB each.
   Presets and sessions saved with the old bass/mid/treble EQ load with the nearest
   band settings.
-- **Pedals** (the *pedals* tab; its label counts the pedals that are on): compressor, fuzz and
-  overdrive go before the amp; chorus, delay and reverb after the cab, like an effects loop.
+- **Pedals** (the *pedals* tab; its label counts the pedals that are on): two rows in signal
+  order. Wah, compressor, fuzz, overdrive, distortion and boost go before the amp; phaser,
+  flanger, chorus, tremolo, delay and reverb after the cab, like an effects loop.
   Click a footswitch to turn a pedal on; switching crossfades over 10 ms, and a pedal that's
   off is skipped entirely (bit-exact pass-through, no CPU).
+  - *Wah*: Pedal (heel to toe, 350 Hz to 2.2 kHz; automate it or map an expression pedal in
+    your host), Auto (an envelope follower opens the filter as you pick harder, up to a full
+    envelope filter), Peak (resonance).
   - *Compressor*: Sustain (threshold and ratio together), Blend (parallel compression),
     Level. *Fuzz*: hard clipper with a scooped tone sweep. *Overdrive*: mid-hump screamer
-    style; low drive and high level tightens the neural amp.
-  - *Chorus*: Rate, Depth, Mix. *Delay*: 20 ms to 2 s; turning Time glides like a tape echo
-    and repeats get darker. *Reverb*: Dattorro plate. Delay and reverb add their wet signal
-    on top of an unchanged dry signal.
-  - All six pedals and the transposer together add ~0.3% of the block deadline
+    style; low drive and high level tightens the neural amp. *Distortion*: RAT-style op-amp
+    clipper whose bandwidth narrows as the gain goes up, with a low-pass tone filter.
+    *Boost*: clean gain (0 to +20 dB) with bass and treble shelves.
+  - *Phaser*: four-stage, with feedback. *Flanger*: 0.7 to 7 ms sweep with feedback.
+    *Chorus*: Rate, Depth, Mix. *Tremolo*: Rate, Depth and Shape (sine to square).
+    *Delay*: 20 ms to 2 s; turning Time glides like a tape echo and repeats get darker.
+    *Reverb*: Dattorro plate. Delay and reverb add their wet signal on top of an unchanged
+    dry signal.
+  - All twelve pedals and the transposer together add ~1.5% of the block deadline
     (`evil-cli bench --pedals all --transpose -2`).
 - **Transpose** (bottom right): ±12 semitones, e.g. -1 for E-flat tuning. Polyphonic, with
   splices aligned to the waveform; it costs ~16 ms of delay while on, and 0 ("off") bypasses

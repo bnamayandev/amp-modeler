@@ -25,6 +25,11 @@ juce::AudioParameterFloatAttributes zeroToTen() {
       [](float v, int) { return juce::String(v * 10.0f, 1); });
 }
 
+juce::AudioParameterFloatAttributes hertz() {
+  return juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction(
+      [](float v, int) { return juce::String(v, 2) + " Hz"; });
+}
+
 juce::AudioParameterFloatAttributes percent() {
   return juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction(
       [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; });
@@ -101,6 +106,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
             return (v > 0 ? "+" : "") + juce::String(v) + " st";
           })));
 
+  layout.add(std::make_unique<Bool>(juce::ParameterID{wahOn, 1}, "Wah", false));
+  addUnit(layout, wahPosition, "Wah Pedal", 0.5f);
+  addUnit(layout, wahAuto, "Wah Auto", 0.0f);
+  addUnit(layout, wahResonance, "Wah Resonance", 0.5f);
+
   layout.add(std::make_unique<Bool>(juce::ParameterID{compOn, 1}, "Compressor", false));
   addUnit(layout, compSustain, "Comp Sustain", 0.5f);
   addUnit(layout, compBlend, "Comp Blend", 1.0f, percent());
@@ -116,13 +126,41 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   addUnit(layout, odTone, "OD Tone", 0.5f);
   addLevel(layout, odLevel, "OD Level");
 
-  layout.add(std::make_unique<Bool>(juce::ParameterID{chorusOn, 1}, "Chorus", false));
+  layout.add(std::make_unique<Bool>(juce::ParameterID{distOn, 1}, "Distortion", false));
+  addUnit(layout, distAmount, "Distortion", 0.6f);
+  addUnit(layout, distTone, "Dist Tone", 0.5f);
+  addLevel(layout, distLevel, "Dist Level");
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{boostOn, 1}, "Boost", false));
   layout.add(std::make_unique<Float>(
-      juce::ParameterID{chorusRate, 1}, "Chorus Rate", range(0.1f, 8.0f, 1.0f), 0.8f,
-      juce::AudioParameterFloatAttributes().withLabel("Hz").withStringFromValueFunction(
-          [](float v, int) { return juce::String(v, 2) + " Hz"; })));
+      juce::ParameterID{boostGain, 1}, "Boost Gain",
+      juce::NormalisableRange<float>(0.0f, 20.0f, 0.01f), 9.0f, decibels()));
+  addLevel(layout, boostBass, "Boost Bass");
+  addLevel(layout, boostTreble, "Boost Treble");
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{phaserOn, 1}, "Phaser", false));
+  layout.add(std::make_unique<Float>(juce::ParameterID{phaserRate, 1}, "Phaser Rate",
+                                     range(0.05f, 8.0f, 0.8f), 0.5f, hertz()));
+  addUnit(layout, phaserDepth, "Phaser Depth", 0.7f);
+  addUnit(layout, phaserFeedback, "Phaser Feedback", 0.3f);
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{flangerOn, 1}, "Flanger", false));
+  layout.add(std::make_unique<Float>(juce::ParameterID{flangerRate, 1}, "Flanger Rate",
+                                     range(0.05f, 5.0f, 0.5f), 0.25f, hertz()));
+  addUnit(layout, flangerDepth, "Flanger Depth", 0.7f);
+  addUnit(layout, flangerFeedback, "Flanger Feedback", 0.5f);
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{chorusOn, 1}, "Chorus", false));
+  layout.add(std::make_unique<Float>(juce::ParameterID{chorusRate, 1}, "Chorus Rate",
+                                     range(0.1f, 8.0f, 1.0f), 0.8f, hertz()));
   addUnit(layout, chorusDepth, "Chorus Depth", 0.5f);
   addUnit(layout, chorusMix, "Chorus Mix", 0.5f, percent());
+
+  layout.add(std::make_unique<Bool>(juce::ParameterID{tremOn, 1}, "Tremolo", false));
+  layout.add(std::make_unique<Float>(juce::ParameterID{tremRate, 1}, "Tremolo Rate",
+                                     range(0.5f, 15.0f, 4.0f), 5.0f, hertz()));
+  addUnit(layout, tremDepth, "Tremolo Depth", 0.6f, percent());
+  addUnit(layout, tremShape, "Tremolo Shape", 0.3f);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{delayOn, 1}, "Delay", false));
   layout.add(std::make_unique<Float>(
@@ -207,7 +245,9 @@ Snapshot::Snapshot(juce::AudioProcessorValueTreeState &s)
       tone(raw(s, params::tone)), oversampling(raw(s, params::oversampling)),
       normalise(raw(s, params::normalise)), cabOn(raw(s, params::cabOn)),
       output(raw(s, params::output)),
-      transpose(raw(s, params::transpose)), compOn(raw(s, params::compOn)),
+      transpose(raw(s, params::transpose)), wahOn(raw(s, params::wahOn)),
+      wahPosition(raw(s, params::wahPosition)), wahAuto(raw(s, params::wahAuto)),
+      wahResonance(raw(s, params::wahResonance)), compOn(raw(s, params::compOn)),
       compSustain(raw(s, params::compSustain)),
       compBlend(raw(s, params::compBlend)),
       compLevel(raw(s, params::compLevel)), fuzzOn(raw(s, params::fuzzOn)),
@@ -215,10 +255,25 @@ Snapshot::Snapshot(juce::AudioProcessorValueTreeState &s)
       fuzzTone(raw(s, params::fuzzTone)), fuzzLevel(raw(s, params::fuzzLevel)),
       odOn(raw(s, params::odOn)), odDrive(raw(s, params::odDrive)),
       odTone(raw(s, params::odTone)), odLevel(raw(s, params::odLevel)),
+      distOn(raw(s, params::distOn)), distAmount(raw(s, params::distAmount)),
+      distTone(raw(s, params::distTone)), distLevel(raw(s, params::distLevel)),
+      boostOn(raw(s, params::boostOn)), boostGain(raw(s, params::boostGain)),
+      boostBass(raw(s, params::boostBass)),
+      boostTreble(raw(s, params::boostTreble)),
+      phaserOn(raw(s, params::phaserOn)),
+      phaserRate(raw(s, params::phaserRate)),
+      phaserDepth(raw(s, params::phaserDepth)),
+      phaserFeedback(raw(s, params::phaserFeedback)),
+      flangerOn(raw(s, params::flangerOn)),
+      flangerRate(raw(s, params::flangerRate)),
+      flangerDepth(raw(s, params::flangerDepth)),
+      flangerFeedback(raw(s, params::flangerFeedback)),
       chorusOn(raw(s, params::chorusOn)),
       chorusRate(raw(s, params::chorusRate)),
       chorusDepth(raw(s, params::chorusDepth)),
-      chorusMix(raw(s, params::chorusMix)), delayOn(raw(s, params::delayOn)),
+      chorusMix(raw(s, params::chorusMix)), tremOn(raw(s, params::tremOn)),
+      tremRate(raw(s, params::tremRate)), tremDepth(raw(s, params::tremDepth)),
+      tremShape(raw(s, params::tremShape)), delayOn(raw(s, params::delayOn)),
       delayTime(raw(s, params::delayTime)),
       delayFeedback(raw(s, params::delayFeedback)),
       delayMix(raw(s, params::delayMix)), reverbOn(raw(s, params::reverbOn)),
@@ -253,10 +308,17 @@ SignalChain::Settings Snapshot::read() const noexcept {
 
   const auto on = [&](const std::atomic<float> *p) { return get(p) >= 0.5f; };
   s.transposeSemitones = juce::roundToInt(get(transpose));
+  s.wah = {on(wahOn), get(wahPosition), get(wahAuto), get(wahResonance)};
   s.compressor = {on(compOn), get(compSustain), get(compBlend), get(compLevel)};
   s.fuzz = {on(fuzzOn), get(fuzzAmount), get(fuzzTone), get(fuzzLevel)};
   s.overdrive = {on(odOn), get(odDrive), get(odTone), get(odLevel)};
+  s.distortion = {on(distOn), get(distAmount), get(distTone), get(distLevel)};
+  s.boost = {on(boostOn), get(boostGain), get(boostBass), get(boostTreble)};
+  s.phaser = {on(phaserOn), get(phaserRate), get(phaserDepth), get(phaserFeedback)};
+  s.flanger = {on(flangerOn), get(flangerRate), get(flangerDepth),
+               get(flangerFeedback)};
   s.chorus = {on(chorusOn), get(chorusRate), get(chorusDepth), get(chorusMix)};
+  s.tremolo = {on(tremOn), get(tremRate), get(tremDepth), get(tremShape)};
   s.delay = {on(delayOn), get(delayTime), get(delayFeedback), get(delayMix)};
   s.reverb = {on(reverbOn), get(reverbDecay), get(reverbTone), get(reverbMix)};
   return s;

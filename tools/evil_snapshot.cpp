@@ -56,7 +56,8 @@ int main(int argc, char **argv) {
 
   editor.reset();
 
-  for (auto *id : {evil::params::odOn, evil::params::delayOn,
+  for (auto *id : {evil::params::wahOn, evil::params::odOn,
+                   evil::params::phaserOn, evil::params::delayOn,
                    evil::params::reverbOn})
     processor.getState().getParameter(id)->setValueNotifyingHost(1.0f);
   auto *transpose = processor.getState().getParameter(evil::params::transpose);

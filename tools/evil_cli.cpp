@@ -13,8 +13,8 @@
 //   X
 //   --oversampling 0|1|2  --block N  --exact-tanh (default: NAM's fast tanh, as
 //   in the plugin)
-//   --transpose N (semitones)  --pedals comp,fuzz,od,chorus,delay,reverb|all
-//   (each at its default settings)
+//   --transpose N (semitones)  --pedals wah,comp,fuzz,od,dist,boost,phaser,
+//   flanger,chorus,trem,delay,reverb|all (each at its default settings)
 //
 // `esr` runs the model alone (no gate, cab, EQ or normalisation) at the file's
 // sample rate, so a 44.1 kHz file exercises the resampling path, and compares
@@ -133,10 +133,16 @@ SignalChain::Settings settingsFrom(const Options &o) {
   const auto pedal = [&](const char *name) {
     return pedals.contains(name) || pedals.contains("all");
   };
+  s.wah.on = pedal("wah");
   s.compressor.on = pedal("comp");
   s.fuzz.on = pedal("fuzz");
   s.overdrive.on = pedal("od");
+  s.distortion.on = pedal("dist");
+  s.boost.on = pedal("boost");
+  s.phaser.on = pedal("phaser");
+  s.flanger.on = pedal("flanger");
   s.chorus.on = pedal("chorus");
+  s.tremolo.on = pedal("trem");
   s.delay.on = pedal("delay");
   s.reverb.on = pedal("reverb");
   return s;

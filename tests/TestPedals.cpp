@@ -123,8 +123,10 @@ TEST_CASE("Pedals switched on and off again return to a bit-exact pass-through",
 
   auto s = neutral();
   s.transposeSemitones = 3;
-  s.compressor.on = s.fuzz.on = s.overdrive.on = true;
-  s.chorus.on = s.delay.on = s.reverb.on = true;
+  s.wah.on = s.compressor.on = s.fuzz.on = s.overdrive.on = true;
+  s.distortion.on = s.boost.on = true;
+  s.phaser.on = s.flanger.on = s.chorus.on = s.tremolo.on = true;
+  s.delay.on = s.reverb.on = true;
   auto y = x;
   run(chain, y, s);
   for (float v : y)
@@ -151,10 +153,14 @@ TEST_CASE("Footswitching modulation and ambience pedals does not click",
   for (size_t start = 0, b = 0; start < x.size(); start += block, ++b) {
     // Toggle a different pedal every ~107 ms.
     if (b % 40 == 20) {
-      switch ((b / 40) % 4) {
+      switch ((b / 40) % 8) {
       case 0: s.compressor.on = !s.compressor.on; break;
       case 1: s.chorus.on = !s.chorus.on; break;
       case 2: s.delay.on = !s.delay.on; break;
+      case 3: s.phaser.on = !s.phaser.on; break;
+      case 4: s.flanger.on = !s.flanger.on; break;
+      case 5: s.tremolo.on = !s.tremolo.on; break;
+      case 6: s.boost.on = !s.boost.on; break;
       default: s.reverb.on = !s.reverb.on; break;
       }
     }
@@ -280,24 +286,169 @@ TEST_CASE("Drive pedals stay bounded and near unity level at their defaults",
   };
   FuzzPedal fuzz;
   OverdrivePedal od;
+  DistortionPedal dist;
   FuzzPedal::Settings fuzzOn;
   fuzzOn.on = true;
   OverdrivePedal::Settings odOn;
   odOn.on = true;
+  DistortionPedal::Settings distOn;
+  distOn.on = true;
 
   for (float amplitude : {0.05f, 0.2f, 1.0f}) {
     const auto [fuzzGain, fuzzPeak] = measure(fuzz, fuzzOn, amplitude);
     const auto [odGain, odPeak] = measure(od, odOn, amplitude);
+    const auto [distGain, distPeak] = measure(dist, distOn, amplitude);
     INFO("input " << amplitude << ": fuzz " << fuzzGain << " dB (peak "
                   << fuzzPeak << "), overdrive " << odGain << " dB (peak "
-                  << odPeak << ")");
+                  << odPeak << "), distortion " << distGain << " dB (peak "
+                  << distPeak << ")");
     CHECK(fuzzPeak < 1.0f);
     CHECK(odPeak < 1.2f);
+    CHECK(distPeak < 1.0f);
     if (amplitude == 0.2f) { // typical DI level
       CHECK(std::abs(fuzzGain) < 6.0);
       CHECK(std::abs(odGain) < 6.0);
+      CHECK(std::abs(distGain) < 6.0);
     }
   }
+}
+
+TEST_CASE("The wah sweeps from heel to toe, and Auto opens it as you pick",
+          "[pedals][wah]") {
+  // Low and high partials: which one the wah lets through shows where it is.
+  const auto partials = [](float position, float autoAmount, float amplitude) {
+    WahPedal wah;
+    wah.prepare(rate);
+    auto x = sine(400.0, rate, (int)rate, amplitude);
+    const auto high = sine(2000.0, rate, (int)rate, amplitude);
+    for (size_t i = 0; i < x.size(); ++i)
+      x[i] += high[i];
+    wah.process(x.data(), (int)x.size(), {true, position, autoAmount, 0.5f});
+    for (float v : x)
+      REQUIRE(std::isfinite(v));
+    const auto at = [&](double f) {
+      return magnitudeAt(x, (size_t)rate / 4, (size_t)rate / 2, f);
+    };
+    return std::pair{at(400.0), at(2000.0)};
+  };
+  const auto [heelLow, heelHigh] = partials(0.0f, 0.0f, 0.2f);
+  const auto [toeLow, toeHigh] = partials(1.0f, 0.0f, 0.2f);
+  INFO("heel " << heelLow << " / " << heelHigh << ", toe " << toeLow << " / "
+               << toeHigh);
+  CHECK(heelLow > 4.0 * heelHigh);
+  CHECK(toeHigh > 4.0 * toeLow);
+
+  // Heel down, but Auto lets loud playing open the filter.
+  const auto [autoLow, autoHigh] = partials(0.0f, 1.0f, 0.2f);
+  INFO("auto " << autoLow << " / " << autoHigh);
+  CHECK(autoHigh > 4.0 * heelHigh);
+  // Quiet playing barely opens it.
+  const auto [quietLow, quietHigh] = partials(0.0f, 1.0f, 0.002f);
+  CHECK(quietLow > 4.0 * quietHigh);
+}
+
+TEST_CASE("The boost adds clean gain and shapes bass and treble",
+          "[pedals][boost]") {
+  const auto gainAt = [](double freq, BoostPedal::Settings s) {
+    BoostPedal boost;
+    boost.prepare(rate);
+    auto x = sine(freq, rate, (int)rate / 2, 0.1f);
+    boost.process(x.data(), (int)x.size(), s);
+    return juce::Decibels::gainToDecibels(
+        magnitudeAt(x, 4800, x.size() - 4800, freq) /
+        magnitudeAt(sine(freq, rate, (int)rate / 2, 0.1f), 4800,
+                    x.size() - 4800, freq));
+  };
+  CHECK(gainAt(800.0, {true, 9.0f, 0.0f, 0.0f}) == Catch::Approx(9.0).margin(0.05));
+  CHECK(gainAt(60.0, {true, 0.0f, 0.0f, 0.0f}) == Catch::Approx(0.0).margin(0.05));
+  CHECK(gainAt(40.0, {true, 0.0f, 9.0f, 0.0f}) > 7.0);
+  CHECK(gainAt(8000.0, {true, 0.0f, 0.0f, -9.0f}) < -7.0);
+  CHECK(std::abs(gainAt(800.0, {true, 0.0f, 9.0f, 9.0f})) < 2.5); // mids stay
+
+  // Linear: a loud sine comes out as a sine, with no added harmonics.
+  BoostPedal boost;
+  boost.prepare(rate);
+  auto x = sine(200.0, rate, (int)rate / 2, 0.5f);
+  boost.process(x.data(), (int)x.size(), {true, 20.0f, 0.0f, 0.0f});
+  // Whole cycles, so the window doesn't leak into the harmonic.
+  CHECK(magnitudeAt(x, 4800, 19200, 400.0) <
+        1.0e-4 * magnitudeAt(x, 4800, 19200, 200.0));
+}
+
+TEST_CASE("The phaser and flanger notch where their stages and delay put "
+          "them", "[pedals][phaser][flanger]") {
+  // With no depth the sweep stands still, so the notches are fixed.
+  const auto passes = [](auto &pedal, auto settings, double freq) {
+    pedal.prepare(rate);
+    auto x = sine(freq, rate, (int)rate / 2, 0.3f);
+    pedal.process(x.data(), (int)x.size(), settings);
+    return magnitudeAt(x, 4800, x.size() - 4800, freq) /
+           magnitudeAt(sine(freq, rate, (int)rate / 2, 0.3f), 4800,
+                       x.size() - 4800, freq);
+  };
+
+  // Four all-passes break at 520 Hz; each shifts 45 degrees at the first
+  // notch, so the four together are 180 degrees out with the dry signal.
+  PhaserPedal phaser;
+  const PhaserPedal::Settings still{true, 1.0f, 0.0f, 0.0f};
+  const double notch =
+      rate / juce::MathConstants<double>::pi *
+      std::atan(std::tan(juce::MathConstants<double>::pi * 520.0 / rate) *
+                std::tan(juce::MathConstants<double>::pi / 8.0));
+  INFO("phaser notch " << notch << " Hz");
+  CHECK(passes(phaser, still, notch) < 0.02);
+  CHECK(passes(phaser, still, 520.0) > 0.98); // the stages in phase again
+
+  // A 2.2 ms delay cancels the frequency whose half period it is.
+  FlangerPedal flanger;
+  const FlangerPedal::Settings fixed{true, 1.0f, 0.0f, 0.0f};
+  CHECK(passes(flanger, fixed, 1000.0 / 4.4) < 0.02);
+  CHECK(passes(flanger, fixed, 1000.0 / 2.2) > 0.98);
+}
+
+TEST_CASE("The tremolo pulses at its rate, from full volume down to its depth",
+          "[pedals][tremolo]") {
+  for (float shape : {0.0f, 1.0f}) {
+    TremoloPedal tremolo;
+    tremolo.prepare(rate);
+    std::vector<float> x((size_t)rate, 0.5f);
+    tremolo.process(x.data(), (int)x.size(), {true, 5.0f, 0.8f, shape});
+    const auto [lo, hi] = std::minmax_element(x.begin(), x.end());
+    INFO("shape " << shape << ": " << *lo << " .. " << *hi);
+    CHECK(*hi == Catch::Approx(0.5f).margin(1.0e-3));
+    CHECK(*lo == Catch::Approx(0.1f).margin(1.0e-3));
+    for (size_t i = 0; i + 9600 < x.size(); i += 487) // 5 Hz period
+      REQUIRE(x[i + 9600] == Catch::Approx(x[i]).margin(1.0e-4));
+    // A square wave spends longer near its extremes than a sine.
+    const auto nearEdge = std::count_if(x.begin(), x.end(), [](float v) {
+      return v > 0.48f || v < 0.12f;
+    });
+    if (shape == 0.0f)
+      CHECK(nearEdge < (long)x.size() / 3);
+    else
+      CHECK(nearEdge > (long)x.size() * 2 / 3);
+  }
+}
+
+TEST_CASE("Full feedback on the phaser and flanger stays bounded",
+          "[pedals]") {
+  SignalChain chain;
+  chain.prepare(rate, block);
+  auto s = neutral();
+  s.phaser = {true, 8.0f, 1.0f, 1.0f};
+  s.flanger = {true, 0.05f, 1.0f, 1.0f};
+  juce::Random random(9);
+  std::vector<float> x((size_t)rate * 10);
+  for (auto &v : x)
+    v = random.nextFloat() * 1.6f - 0.8f;
+  run(chain, x, s);
+  float peak = 0.0f;
+  for (float v : x) {
+    REQUIRE(std::isfinite(v));
+    peak = std::max(peak, std::abs(v));
+  }
+  INFO("peak " << peak);
+  CHECK(peak < 8.0f);
 }
 
 TEST_CASE("The metronome clicks on the beat and accents the bar",
@@ -392,8 +543,10 @@ TEST_CASE("Presets set the pedals but leave transpose and the metronome alone",
   CHECK(host.get(params::metronomeBpm) == 90.0f);
 
   REQUIRE(presets.load(0)); // the default preset turns every pedal off
-  for (auto *id : {params::compOn, params::fuzzOn, params::odOn,
-                   params::chorusOn, params::delayOn, params::reverbOn})
+  for (auto *id : {params::wahOn, params::compOn, params::fuzzOn, params::odOn,
+                   params::distOn, params::boostOn, params::phaserOn,
+                   params::flangerOn, params::chorusOn, params::tremOn,
+                   params::delayOn, params::reverbOn})
     CHECK(host.get(id) == 0.0f);
   CHECK(host.get(params::transpose) == -2.0f);
 }

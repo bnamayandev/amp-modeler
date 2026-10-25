@@ -61,13 +61,18 @@ TEST_CASE("The audio path never allocates or frees, even while models, IRs "
       s.inputDb = random.nextFloat() * 12.0f;
       s.amp.driveDb = random.nextFloat() * 40.0f;
       s.transposeSemitones = random.nextInt(25) - 12;
-      for (auto *on : {&s.compressor.on, &s.fuzz.on, &s.overdrive.on,
-                       &s.chorus.on, &s.delay.on, &s.reverb.on})
+      for (auto *on : {&s.wah.on, &s.compressor.on, &s.fuzz.on,
+                       &s.overdrive.on, &s.distortion.on, &s.boost.on,
+                       &s.phaser.on, &s.flanger.on, &s.chorus.on,
+                       &s.tremolo.on, &s.delay.on, &s.reverb.on})
         *on = random.nextBool();
       s.delay.timeMs = 20.0f + random.nextFloat() * 1980.0f;
       s.delay.feedback = random.nextFloat() * 0.95f;
       s.reverb.decay = random.nextFloat();
       s.chorus.rateHz = 0.1f + random.nextFloat() * 7.9f;
+      s.wah.autoAmount = random.nextFloat();
+      s.flanger.feedback = random.nextFloat();
+      s.tremolo.rateHz = 0.5f + random.nextFloat() * 14.5f;
     }
     if (b % 100 == 0)
       chain.getModels().collectGarbage();

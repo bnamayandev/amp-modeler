@@ -9,13 +9,19 @@ void SignalChain::prepare(double sampleRate, int maxBlockSize) {
   outputGain.reset(sampleRate, 0.02);
   gate.prepare(sampleRate);
   transposer.prepare(sampleRate);
+  wah.prepare(sampleRate);
   compressor.prepare(sampleRate);
   fuzz.prepare(sampleRate);
   overdrive.prepare(sampleRate);
+  distortion.prepare(sampleRate);
+  boost.prepare(sampleRate);
   amp.prepare(sampleRate, maxBlockSize);
   cab.prepare(sampleRate, maxBlockSize);
   eq.prepare(sampleRate);
+  phaser.prepare(sampleRate);
+  flanger.prepare(sampleRate);
   chorus.prepare(sampleRate);
+  tremolo.prepare(sampleRate);
   delay.prepare(sampleRate);
   reverb.prepare(sampleRate);
   for (auto &f : footswitches)
@@ -27,13 +33,19 @@ void SignalChain::prepare(double sampleRate, int maxBlockSize) {
 void SignalChain::reset() noexcept {
   gate.reset();
   transposer.reset();
+  wah.reset();
   compressor.reset();
   fuzz.reset();
   overdrive.reset();
+  distortion.reset();
+  boost.reset();
   amp.reset();
   cab.reset();
   eq.reset();
+  phaser.reset();
+  flanger.reset();
   chorus.reset();
+  tremolo.reset();
   delay.reset();
   reverb.reset();
   for (auto &f : footswitches)
@@ -62,15 +74,21 @@ void SignalChain::processChunk(float *data, int n, const Settings &s) noexcept {
   gate.process(data, n, s.gateThresholdDb, s.gateOn);
   auto *dry = scratch.data();
   transposer.process(data, n, s.transposeSemitones, dry);
-  footswitches[0].process(compressor, data, n, s.compressor, dry);
-  footswitches[1].process(fuzz, data, n, s.fuzz, dry);
-  footswitches[2].process(overdrive, data, n, s.overdrive, dry);
+  footswitches[0].process(wah, data, n, s.wah, dry);
+  footswitches[1].process(compressor, data, n, s.compressor, dry);
+  footswitches[2].process(fuzz, data, n, s.fuzz, dry);
+  footswitches[3].process(overdrive, data, n, s.overdrive, dry);
+  footswitches[4].process(distortion, data, n, s.distortion, dry);
+  footswitches[5].process(boost, data, n, s.boost, dry);
   amp.process(data, n, s.amp);
   cab.process(data, n, s.cabOn);
   eq.process(data, n, s.eqDb);
-  footswitches[3].process(chorus, data, n, s.chorus, dry);
-  footswitches[4].process(delay, data, n, s.delay, dry);
-  footswitches[5].process(reverb, data, n, s.reverb, dry);
+  footswitches[6].process(phaser, data, n, s.phaser, dry);
+  footswitches[7].process(flanger, data, n, s.flanger, dry);
+  footswitches[8].process(chorus, data, n, s.chorus, dry);
+  footswitches[9].process(tremolo, data, n, s.tremolo, dry);
+  footswitches[10].process(delay, data, n, s.delay, dry);
+  footswitches[11].process(reverb, data, n, s.reverb, dry);
   outputGain.applyGain(data, n);
 }
 } // namespace evil

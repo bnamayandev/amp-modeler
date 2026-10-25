@@ -5,12 +5,18 @@
 
 namespace evil::gui {
 namespace {
-constexpr int captionHeight = 26, gap = 10, ampSlotWidth = 64;
-constexpr int headerHeight = 44, footswitchArea = 88;
+constexpr int captionHeight = 26, gap = 10, rowGap = 12, ampBlockWidth = 50;
+constexpr int headerHeight = 44, labelHeight = 16;
 
-const std::array<Pedal::Spec, 6> &pedalSpecs() {
+const std::array<Pedal::Spec, 12> &pedalSpecs() {
   namespace p = params;
-  static const std::array<Pedal::Spec, 6> specs{{
+  static const std::array<Pedal::Spec, 12> specs{{
+      {"wah", p::wahOn,
+       {{{p::wahPosition, "Pedal"}, {p::wahAuto, "Auto"},
+         {p::wahResonance, "Peak"}}},
+       "Sweep Pedal from heel to toe, or map it to an expression pedal in "
+       "your host. Auto opens the filter as you pick harder, for an envelope "
+       "filter."},
       {"compressor", p::compOn,
        {{{p::compSustain, "Sustain"}, {p::compBlend, "Blend"},
          {p::compLevel, "Level"}}},
@@ -25,10 +31,34 @@ const std::array<Pedal::Spec, 6> &pedalSpecs() {
        {{{p::odDrive, "Drive"}, {p::odTone, "Tone"}, {p::odLevel, "Level"}}},
        "Mid-hump overdrive. Low drive and high level tightens a high-gain "
        "amp; more drive is a lead tone on its own."},
+      {"distortion", p::distOn,
+       {{{p::distAmount, "Dist"}, {p::distTone, "Tone"},
+         {p::distLevel, "Level"}}},
+       "Op-amp distortion in the style of the RAT: tighter and more "
+       "saturated than the overdrive, with a filter from muffled to raw."},
+      {"boost", p::boostOn,
+       {{{p::boostGain, "Boost"}, {p::boostBass, "Bass"},
+         {p::boostTreble, "Treble"}}},
+       "Clean boost with bass and treble shelves: hits the amp harder or "
+       "lifts a solo."},
+      {"phaser", p::phaserOn,
+       {{{p::phaserRate, "Rate"}, {p::phaserDepth, "Depth"},
+         {p::phaserFeedback, "Feedback"}}},
+       "Four-stage phaser. Feedback sharpens the sweep into a vocal "
+       "resonance."},
+      {"flanger", p::flangerOn,
+       {{{p::flangerRate, "Rate"}, {p::flangerDepth, "Depth"},
+         {p::flangerFeedback, "Feedback"}}},
+       "Jet-plane flanger. A slow rate and high feedback for the classic "
+       "whoosh."},
       {"chorus", p::chorusOn,
        {{{p::chorusRate, "Rate"}, {p::chorusDepth, "Depth"},
          {p::chorusMix, "Mix"}}},
-       "Classic single-voice chorus, after the cab."},
+       "Classic single-voice chorus."},
+      {"tremolo", p::tremOn,
+       {{{p::tremRate, "Rate"}, {p::tremDepth, "Depth"},
+         {p::tremShape, "Shape"}}},
+       "Volume pulse. Shape goes from a smooth throb to a hard chop."},
       {"delay", p::delayOn,
        {{{p::delayTime, "Time"}, {p::delayFeedback, "Feedback"},
          {p::delayMix, "Mix"}}},
@@ -36,8 +66,8 @@ const std::array<Pedal::Spec, 6> &pedalSpecs() {
       {"reverb", p::reverbOn,
        {{{p::reverbDecay, "Decay"}, {p::reverbTone, "Tone"},
          {p::reverbMix, "Mix"}}},
-       "Plate reverb, after the cab."},
-  }};
+       "Plate reverb."},
+}};
   return specs;
 }
 } // namespace
@@ -86,13 +116,18 @@ void Pedal::paint(juce::Graphics &g) {
 }
 
 void Pedal::resized() {
-  auto b = getLocalBounds().reduced(12, 0);
+  auto b = getLocalBounds().reduced(8, 0);
   b.removeFromTop(headerHeight);
-  auto foot = b.removeFromBottom(footswitchArea);
-  footswitch.setBounds(foot.withSizeKeepingCentre(52, 52).translated(0, -10));
-  const int knobHeight = b.getHeight() / 3;
-  for (auto &k : knobs)
-    k->setBounds(b.removeFromTop(knobHeight));
+  b.removeFromBottom(4);
+  // Two by two: the first two knobs, then the third beside the footswitch.
+  constexpr int knobRowGap = 8;
+  const int rowHeight = (b.getHeight() - knobRowGap) / 2, columnWidth = b.getWidth() / 2;
+  auto top = b.removeFromTop(rowHeight);
+  b.removeFromTop(knobRowGap);
+  knobs[0]->setBounds(top.removeFromLeft(columnWidth));
+  knobs[1]->setBounds(top);
+  knobs[2]->setBounds(b.removeFromLeft(columnWidth));
+  footswitch.setBounds(b.withSizeKeepingCentre(48, 48).translated(0, -labelHeight / 2));
 }
 
 PedalBoard::PedalBoard(juce::AudioProcessorValueTreeState &state) {
@@ -111,38 +146,44 @@ int PedalBoard::getNumActive() const noexcept {
 
 void PedalBoard::resized() {
   auto b = getLocalBounds();
-  b.removeFromTop(captionHeight);
-  const int width = (b.getWidth() - ampSlotWidth - 4 * gap) / 6;
-  for (size_t i = 0; i < pedals.size(); ++i) {
-    pedals[i]->setBounds(b.removeFromLeft(width));
-    if (i == 2)
-      ampSlot = b.removeFromLeft(ampSlotWidth);
-    else if (i < 5)
-      b.removeFromLeft(gap);
+  const int rowHeight = (b.getHeight() - rowGap) / 2 - captionHeight;
+  const int width = (b.getWidth() - (int)(perRow - 1) * gap) / (int)perRow;
+  for (size_t row = 0; row < 2; ++row) {
+    if (row == 1)
+      b.removeFromTop(rowGap);
+    auto caption = b.removeFromTop(captionHeight);
+    if (row == 1)
+      ampSlot = caption.removeFromLeft(ampBlockWidth).withTrimmedBottom(8);
+    auto pedalRow = b.removeFromTop(rowHeight);
+    for (size_t i = 0; i < perRow; ++i) {
+      pedals[row * perRow + i]->setBounds(pedalRow.removeFromLeft(width));
+      pedalRow.removeFromLeft(gap);
+    }
+    signalY[row] = getLocalArea(pedals[row * perRow].get(),
+                                pedals[row * perRow]->getFootswitchBounds())
+                       .getCentreY();
   }
-  signalY = pedals[0]->getBottom() - footswitchArea / 2 - 10;
 }
 
 void PedalBoard::paint(juce::Graphics &g) {
   using namespace colours;
-  // Group captions above the pedals.
+  // Row captions; the amp and cab sit between the two rows.
   g.setFont(caption());
   g.setColour(muted);
-  const auto preArea = pedals[0]->getBounds().getUnion(pedals[2]->getBounds());
-  const auto postArea = pedals[3]->getBounds().getUnion(pedals[5]->getBounds());
-  g.drawText("INTO THE AMP", preArea.withY(0).withHeight(captionHeight - 8),
+  g.drawText("INTO THE AMP", 0, 0, getWidth(), captionHeight - 8,
              juce::Justification::centredLeft);
-  g.drawText("AFTER THE CAB", postArea.withY(0).withHeight(captionHeight - 8),
+  g.drawText("AFTER THE CAB",
+             ampSlot.withX(ampSlot.getRight() + 10).withRight(getWidth()),
              juce::Justification::centredLeft);
 
   // Signal path through the gaps (the pedals cover the rest of it).
   g.setColour(line);
-  g.fillRect(0, signalY, getWidth(), 1);
+  for (int y : signalY)
+    g.fillRect(0, y, getWidth(), 1);
 
-  // The amp, as a small block on the path.
-  const auto amp = ampSlot.toFloat()
-                       .withSizeKeepingCentre((float)ampSlotWidth - 14.0f, 26.0f)
-                       .withCentre({(float)ampSlot.getCentreX(), (float)signalY});
+  // The amp, as a small block heading the second row.
+  const auto amp = ampSlot.toFloat().withSizeKeepingCentre(
+      (float)ampBlockWidth, (float)juce::jmin(20, ampSlot.getHeight()));
   g.setColour(background);
   g.fillRoundedRectangle(amp, 6.0f);
   g.setColour(accent.withAlpha(0.4f));

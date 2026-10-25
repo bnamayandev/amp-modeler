@@ -14,9 +14,10 @@ namespace evil {
 /** Everything the plugin does to the guitar signal, independent of the plugin
    wrapper so tests and the CLI run exactly the same code:
 
-        input gain -> noise gate -> transposer -> compressor -> fuzz ->
-   overdrive -> amp (overdrive | neural) -> cab IR -> EQ -> chorus -> delay ->
-   reverb -> output level
+        input gain -> noise gate -> transposer -> wah -> compressor -> fuzz
+   -> overdrive -> distortion -> boost -> amp (overdrive | neural) -> cab IR ->
+   EQ -> phaser -> flanger -> chorus -> tremolo -> delay -> reverb -> output
+   level
 
     Pedals before the amp sit where they would on a pedalboard; modulation and
    ambience go after the cab, like an effects loop.
@@ -31,13 +32,19 @@ public:
     bool gateOn = true;
     float gateThresholdDb = -65.0f;
     int transposeSemitones = 0;
+    WahPedal::Settings wah;
     CompressorPedal::Settings compressor;
     FuzzPedal::Settings fuzz;
     OverdrivePedal::Settings overdrive;
+    DistortionPedal::Settings distortion;
+    BoostPedal::Settings boost;
     AmpStage::Settings amp;
     bool cabOn = true;
     Equaliser::Gains eqDb{};
+    PhaserPedal::Settings phaser;
+    FlangerPedal::Settings flanger;
     ChorusPedal::Settings chorus;
+    TremoloPedal::Settings tremolo;
     DelayPedal::Settings delay;
     ReverbPedal::Settings reverb;
     float outputDb = 0.0f;
@@ -72,16 +79,22 @@ private:
       inputGain, outputGain;
   NoiseGate gate;
   PitchShifter transposer;
+  WahPedal wah;
   CompressorPedal compressor;
   FuzzPedal fuzz;
   OverdrivePedal overdrive;
+  DistortionPedal distortion;
+  BoostPedal boost;
   AmpStage amp;
   CabSim cab;
   Equaliser eq;
+  PhaserPedal phaser;
+  FlangerPedal flanger;
   ChorusPedal chorus;
+  TremoloPedal tremolo;
   DelayPedal delay;
   ReverbPedal reverb;
-  std::array<FootswitchFade, 6> footswitches;
+  std::array<FootswitchFade, 12> footswitches;
   std::vector<float> scratch; // dry copy while a footswitch crossfades
 };
 } // namespace evil

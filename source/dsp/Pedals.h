@@ -6,6 +6,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 namespace evil {
@@ -55,6 +56,34 @@ public:
 
 private:
   int length = 480, position = 0;
+  bool primed = false;
+};
+
+/** Wah: a resonant band-pass swept from 350 Hz (heel) to 2.2 kHz (toe), the
+   range of the classic inductor wahs, as a state-variable filter that stays
+   smooth under fast sweeps. Auto adds an envelope follower that opens the
+   filter from the pedal position as you pick harder: all the way up it is an
+   envelope filter. */
+class WahPedal {
+public:
+  struct Settings {
+    bool on = false;
+    float position = 0.5f;   // 0 heel .. 1 toe
+    float autoAmount = 0.0f; // 0 manual .. 1 the envelope sweeps to the toe
+    float resonance = 0.5f;  // 0..1
+  };
+
+  void prepare(double sampleRate);
+  void reset() noexcept;
+  void process(float *data, int n, const Settings &s) noexcept;
+
+private:
+  double sampleRate = 48000.0;
+  float attackCoeff = 0.0f, releaseCoeff = 0.0f, envelope = 0.0f;
+  float ic1 = 0.0f, ic2 = 0.0f;          // filter state
+  float a1 = 1.0f, a2 = 0.0f, a3 = 0.0f; // filter coefficients
+  float k = 1.0f, outputGain = 1.0f;
+  juce::SmoothedValue<float> position, autoAmount, resonance;
   bool primed = false;
 };
 
@@ -136,6 +165,56 @@ private:
   bool primed = false;
 };
 
+/** Distortion in the style of the RAT: an op-amp gain stage with a treble
+   lift whose bandwidth narrows as the gain goes up (so more distortion is also
+   smoother), symmetric hard clipping (antiderivative anti-aliased), then a
+   low-pass filter that sweeps from muffled to raw. */
+class DistortionPedal {
+public:
+  struct Settings {
+    bool on = false;
+    float distortion = 0.6f; // 0..1
+    float tone = 0.5f;       // 0 dark .. 1 bright
+    float levelDb = 0.0f;
+  };
+
+  void prepare(double sampleRate);
+  void reset() noexcept;
+  void process(float *data, int n, const Settings &s) noexcept;
+
+private:
+  double sampleRate = 48000.0;
+  Biquad inputHighPass, trebleHighPass, opAmpLowPass, toneLowPass;
+  float previous = 0.0f, previousAntiderivative = 0.0f;
+  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain,
+      level;
+  juce::SmoothedValue<float> bandwidth, tone; // bandwidth follows distortion
+  bool primed = false;
+};
+
+/** Clean boost with bass and treble shelves, to hit the amp harder or lift a
+   solo. Linear: it adds level, not distortion of its own. */
+class BoostPedal {
+public:
+  struct Settings {
+    bool on = false;
+    float gainDb = 9.0f;   // 0..20
+    float bassDb = 0.0f;   // +/-12, shelf at 120 Hz
+    float trebleDb = 0.0f; // +/-12, shelf at 2.5 kHz
+  };
+
+  void prepare(double sampleRate);
+  void reset() noexcept;
+  void process(float *data, int n, const Settings &s) noexcept;
+
+private:
+  double sampleRate = 48000.0;
+  Biquad bassShelf, trebleShelf;
+  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain;
+  juce::SmoothedValue<float> bass, treble;
+  bool primed = false;
+};
+
 /** Single-voice chorus: a 4-10 ms delay swept by a sine LFO, darkened a little
    like a bucket-brigade line, mixed with the dry signal. */
 class ChorusPedal {
@@ -186,6 +265,78 @@ private:
   float delaySamples = 0.0f, glideCoeff = 0.0f;
   Biquad loopLowPass, loopHighPass;
   juce::SmoothedValue<float> feedback, mix;
+  bool primed = false;
+};
+/** Four-stage phaser, the Phase 90 recipe: the signal through four swept
+   first-order all-passes is mixed equally with the dry signal, which cuts two
+   notches that move with the LFO. Feedback around the stages sharpens them
+   into resonant peaks. */
+class PhaserPedal {
+public:
+  struct Settings {
+    bool on = false;
+    float rateHz = 0.5f;
+    float depth = 0.7f;    // 0..1
+    float feedback = 0.3f; // 0..1
+  };
+
+  void prepare(double sampleRate);
+  void reset() noexcept;
+  void process(float *data, int n, const Settings &s) noexcept;
+
+private:
+  double sampleRate = 48000.0;
+  std::array<float, 4> stages{};
+  float last = 0.0f;
+  double phase = 0.0;
+  juce::SmoothedValue<float> rate, depth, feedback;
+  bool primed = false;
+};
+
+/** Flanger: a 0.7-7 ms delay swept by a slow LFO and mixed equally with the
+   dry signal, so the comb filter's notches sweep through the whole spectrum.
+   Feedback (regeneration) makes it ring like a jet. */
+class FlangerPedal {
+public:
+  struct Settings {
+    bool on = false;
+    float rateHz = 0.25f;
+    float depth = 0.7f;    // 0..1
+    float feedback = 0.5f; // 0..1
+  };
+
+  void prepare(double sampleRate);
+  void reset() noexcept;
+  void process(float *data, int n, const Settings &s) noexcept;
+
+private:
+  double sampleRate = 48000.0;
+  DelayLine line;
+  OnsetRamp onset;
+  double phase = 0.0;
+  juce::SmoothedValue<float> rate, depth, feedback;
+  bool primed = false;
+};
+
+/** Tremolo: the volume pulses with an LFO that Shape squares off, from a
+   smooth throb like an optical tremolo to a hard chop. */
+class TremoloPedal {
+public:
+  struct Settings {
+    bool on = false;
+    float rateHz = 5.0f;
+    float depth = 0.6f; // 0..1
+    float shape = 0.3f; // 0 sine .. 1 square
+  };
+
+  void prepare(double sampleRate);
+  void reset() noexcept;
+  void process(float *data, int n, const Settings &s) noexcept;
+
+private:
+  double sampleRate = 48000.0;
+  double phase = 0.0;
+  juce::SmoothedValue<float> rate, depth, shape;
   bool primed = false;
 };
 } // namespace evil

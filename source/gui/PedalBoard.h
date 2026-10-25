@@ -6,8 +6,9 @@
 #include <memory>
 
 namespace evil::gui {
-/** One stomp box: a header with its LED, three knobs, a footswitch. Its knobs
-   dim while it is bypassed, like the amp's inactive section. */
+/** One stomp box: a header with its LED, then three knobs and a footswitch in
+   a two-by-two grid. Its knobs dim while it is bypassed, like the amp's
+   inactive section. */
 class Pedal final : public juce::Component {
 public:
   struct Spec {
@@ -22,6 +23,9 @@ public:
   void paint(juce::Graphics &) override;
   void resized() override;
   bool isOn() const noexcept { return footswitch.getToggleState(); }
+  juce::Rectangle<int> getFootswitchBounds() const noexcept {
+    return footswitch.getBounds();
+  }
 
 private:
   void setOn(bool on);
@@ -32,8 +36,8 @@ private:
   std::unique_ptr<juce::ParameterAttachment> onAttachment;
 };
 
-/** The pedal page: pedals in signal order, left to right, split where the amp
-   sits between the drives and the time-based effects. */
+/** The pedal page: pedals in signal order, left to right, in two rows: the
+   ones into the amp above, the ones after the cab below. */
 class PedalBoard final : public juce::Component {
 public:
   explicit PedalBoard(juce::AudioProcessorValueTreeState &state);
@@ -44,8 +48,10 @@ public:
   int getNumActive() const noexcept;
 
 private:
-  std::array<std::unique_ptr<Pedal>, 6> pedals;
+  static constexpr size_t perRow = 6;
+
+  std::array<std::unique_ptr<Pedal>, 2 * perRow> pedals;
   juce::Rectangle<int> ampSlot;
-  int signalY = 0;
+  std::array<int, 2> signalY{};
 };
 } // namespace evil::gui

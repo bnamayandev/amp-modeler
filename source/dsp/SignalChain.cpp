@@ -15,7 +15,7 @@ void SignalChain::prepare(double sampleRate, int maxBlockSize) {
   overdrive.prepare(sampleRate);
   distortion.prepare(sampleRate);
   boost.prepare(sampleRate);
-  amp.prepare(sampleRate, maxBlockSize);
+  models.prepare(sampleRate, maxBlockSize);
   cab.prepare(sampleRate, maxBlockSize);
   eq.prepare(sampleRate);
   phaser.prepare(sampleRate);
@@ -39,7 +39,6 @@ void SignalChain::reset() noexcept {
   overdrive.reset();
   distortion.reset();
   boost.reset();
-  amp.reset();
   cab.reset();
   eq.reset();
   phaser.reset();
@@ -80,7 +79,7 @@ void SignalChain::processChunk(float *data, int n, const Settings &s) noexcept {
   footswitches[3].process(overdrive, data, n, s.overdrive, dry);
   footswitches[4].process(distortion, data, n, s.distortion, dry);
   footswitches[5].process(boost, data, n, s.boost, dry);
-  amp.process(data, n, s.amp);
+  models.process(data, data, n);
   cab.process(data, n, s.cabOn);
   eq.process(data, n, s.eqDb);
   footswitches[6].process(phaser, data, n, s.phaser, dry);

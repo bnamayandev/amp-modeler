@@ -32,7 +32,7 @@ Using it
    - Plug the guitar into the interface's instrument (Hi-Z / INST) input.
    - Turn up the interface gain until the plugin's INPUT meter peaks around -12 dB when
      you play hard, without lighting the red clip light at the top.
-   - Amp > Neural plays the built-in Blackstar HT-1 amp model. "Load .nam..." loads any
+   - The Amp panel plays the built-in Blackstar HT-1 amp model. "Load .nam..." loads any
      Neural Amp Modeler capture (for example from tone3000.com).
    - Cabinet > "Load IR..." loads a cabinet impulse response (.wav).
 

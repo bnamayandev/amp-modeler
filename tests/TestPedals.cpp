@@ -18,7 +18,6 @@ constexpr int block = 128;
 SignalChain::Settings neutral() {
   SignalChain::Settings s;
   s.gateOn = false;
-  s.amp.mode = AmpMode::off;
   s.cabOn = false;
   return s;
 }

@@ -7,18 +7,15 @@
 //   device types and devices this build can open)
 //
 // Chain options:
-//   --model <path|builtin:Name>  --ir <path|builtin:Name>  --amp
-//   off|overdrive|neural
-//   --no-cab  --no-gate  --no-normalise  --input-db X  --output-db X --drive-db
-//   X
-//   --oversampling 0|1|2  --block N  --exact-tanh (default: NAM's fast tanh, as
-//   in the plugin)
+//   --model <path|builtin:Name>  --ir <path|builtin:Name>
+//   --no-cab  --no-gate  --input-db X  --output-db X  --block N
+//   --exact-tanh (default: NAM's fast tanh, as in the plugin)
 //   --transpose N (semitones)  --pedals wah,comp,fuzz,od,dist,boost,phaser,
 //   flanger,chorus,trem,delay,reverb|all (each at its default settings)
 //
-// `esr` runs the model alone (no gate, cab, EQ or normalisation) at the file's
-// sample rate, so a 44.1 kHz file exercises the resampling path, and compares
-// against the target. `bench` times every block against its real-time deadline:
+// `esr` runs the model alone (no gate, cab or EQ) at the file's sample rate,
+// so a 44.1 kHz file exercises the resampling path, and compares against the
+// target. `bench` times every block against its real-time deadline:
 // the numbers the plugin logs.
 
 #include "dsp/SignalChain.h"
@@ -34,7 +31,6 @@
 #include <optional>
 
 namespace {
-using evil::AmpMode;
 using evil::SignalChain;
 
 struct Options {
@@ -54,10 +50,9 @@ struct Options {
 
 Options parse(int argc, char **argv) {
   static const juce::StringArray valued{
-      "--model",     "--ir",       "--amp",          "--input-db",
-      "--output-db", "--drive-db", "--oversampling", "--block",
-      "--seconds",   "--rate",     "--csv",          "--out",
-      "--transpose", "--pedals"};
+      "--model",   "--ir",   "--input-db", "--output-db", "--block",
+      "--seconds", "--rate", "--csv",      "--out",       "--transpose",
+      "--pedals"};
   Options o;
   for (int i = 2; i < argc; ++i) {
     const juce::String arg(argv[i]);
@@ -121,13 +116,6 @@ SignalChain::Settings settingsFrom(const Options &o) {
   s.outputDb = o.get("--output-db", "0").getFloatValue();
   s.gateOn = !o.has("--no-gate");
   s.cabOn = !o.has("--no-cab");
-  s.amp.normalise = !o.has("--no-normalise");
-  s.amp.driveDb = o.get("--drive-db", "20").getFloatValue();
-  s.amp.oversampling = o.get("--oversampling", "2").getIntValue();
-  const auto amp = o.get("--amp", "neural");
-  s.amp.mode = amp == "off"         ? AmpMode::off
-               : amp == "overdrive" ? AmpMode::overdrive
-                                    : AmpMode::neural;
   s.transposeSemitones = o.get("--transpose", "0").getIntValue();
   const auto pedals = juce::StringArray::fromTokens(o.get("--pedals"), ",", "");
   const auto pedal = [&](const char *name) {
@@ -209,8 +197,6 @@ int esr(const Options &o) {
   SignalChain::Settings s;
   s.gateOn = false;
   s.cabOn = false;
-  s.amp.mode = AmpMode::neural;
-  s.amp.normalise = false;
   const int block = o.get("--block", "128").getIntValue();
 
   SignalChain chain;
@@ -292,9 +278,8 @@ int bench(const Options &o) {
                                       [&](double x) { return x > deadline; });
   const auto status = chain.getModels().getStatus();
 
-  std::printf("chain: amp=%s model=%s cab=%s, %.0f Hz, %d-sample blocks "
+  std::printf("chain: model=%s cab=%s, %.0f Hz, %d-sample blocks "
               "(deadline %.3f ms), %.0f s of audio\n",
-              o.get("--amp", "neural").toRawUTF8(),
               status.info.name.toRawUTF8(), s.cabOn ? "on" : "off", rate, block,
               1000.0 * deadline, seconds);
   std::printf("time per block as %% of deadline: mean %.2f  p50 %.2f  p99 %.2f "

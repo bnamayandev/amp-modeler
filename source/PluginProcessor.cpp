@@ -66,7 +66,7 @@ void EvilAmplifierProcessor::prepareToPlay(double sampleRate,
   bypassDelay.clear();
   bypassWrite = 0;
 
-  const int latency = chain.computeLatencySamples(snapshot.read());
+  const int latency = chain.getLatencySamples();
   setLatencySamples(latency);
   reportedLatency = latency;
   prepared = true;

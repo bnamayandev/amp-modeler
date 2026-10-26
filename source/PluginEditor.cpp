@@ -27,11 +27,6 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
       inputKnob(p.getState(), params::input, "Input"),
       gateKnob(p.getState(), params::gateThreshold, "Gate"),
       gateAttachment(p.getState(), params::gateOn, gateButton),
-      normaliseAttachment(p.getState(), params::normalise, normaliseButton),
-      driveKnob(p.getState(), params::drive, "Drive"),
-      toneKnob(p.getState(), params::tone, "Tone"),
-      oversamplingAttachment(p.getState(), params::oversampling,
-                             withItems(oversamplingBox, {"Off", "2x", "4x"})),
       cabAttachment(p.getState(), params::cabOn, cabButton),
       outputKnob(p.getState(), params::output, "Output"),
       bpmAttachment(p.getState(), params::metronomeBpm, bpmSlider),
@@ -71,42 +66,18 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   gateButton.setTooltip("Noise gate before the amp");
 
   // Amp
-  auto &modeParam = *p.getState().getParameter(params::ampMode);
-  for (int i = 0; i < 3; ++i) {
-    auto &b = modeButtons[i];
-    b.setClickingTogglesState(false);
-    b.onClick = [this, i] {
-      modeAttachment->setValueAsCompleteGesture((float)i);
-    };
-    ampPage.addAndMakeVisible(b);
-  }
-  modeAttachment = std::make_unique<juce::ParameterAttachment>(
-      modeParam, [this](float value) {
-        const int mode = juce::roundToInt(value);
-        for (int i = 0; i < 3; ++i)
-          modeButtons[i].setToggleState(i == mode, juce::dontSendNotification);
-        refreshAmpSections();
-      });
-  modeAttachment->sendInitialUpdate();
-
   styleLabel(modelName, gui::sans(19.0f, true, -0.015f), gui::colours::text);
   styleLabel(modelDetails, gui::mono(11.0f), gui::colours::muted);
   modelDetails.setJustificationType(juce::Justification::topLeft);
   for (auto *c : std::initializer_list<juce::Component *>{
            &modelName, &modelDetails, &loadModelButton, &builtinModelButton,
-           &unloadModelButton, &normaliseButton, &driveKnob, &toneKnob,
-           &oversamplingLabel, &oversamplingBox})
+           &unloadModelButton})
     ampPage.addAndMakeVisible(c);
   loadModelButton.onClick = [this] { chooseModelFile(); };
   builtinModelButton.onClick = [this] { showBuiltinModels(); };
   unloadModelButton.onClick = [this] { audioProcessor.unloadModel(); };
   loadModelButton.setTooltip("Load a Neural Amp Modeler .nam capture");
-  normaliseButton.setTooltip(
-      "Match the model's output to -18 dBFS using its loudness metadata");
-  oversamplingLabel.setText("OVERSAMPLING", juce::dontSendNotification);
-  styleLabel(oversamplingLabel, gui::caption(), gui::colours::muted);
-  oversamplingBox.setTooltip(
-      "Oversampling around the overdrive waveshaper (reduces aliasing)");
+  unloadModelButton.setTooltip("Play without a model: the amp passes clean");
 
   // Cab
   styleLabel(irName, gui::sans(17.0f, true, -0.015f), gui::colours::text);
@@ -260,20 +231,6 @@ void EvilAmplifierEditor::paintCanvas(juce::Graphics &g) {
   gui::drawPanel(g, eqPanel, 4, "EQ");
   gui::drawPanel(g, outputPanel, 5, "Output");
 
-  // Amp sub-sections: the active one's caption takes the accent.
-  const int mode = juce::roundToInt(
-      audioProcessor.getState().getRawParameterValue(params::ampMode)->load());
-  g.setFont(gui::caption());
-  g.setColour(mode == 2 ? accent : mutedSoft);
-  g.drawText("NEURAL MODEL", neuralArea.getX(), neuralArea.getY(), 200, 16,
-             juce::Justification::centredLeft);
-  g.setColour(mode == 1 ? accent : mutedSoft);
-  g.drawText("GRAY-BOX OVERDRIVE", overdriveArea.getX(), overdriveArea.getY(),
-             220, 16, juce::Justification::centredLeft);
-  g.setColour(lineSoft);
-  g.fillRect(overdriveArea.getX() - 14, overdriveArea.getY(), 1,
-             overdriveArea.getHeight());
-
   // Gate activity LED, at the end of the input panel's header rule.
   gateLed = juce::Rectangle<float>(8.0f, 8.0f).withCentre(
       {inputRule.getRight() - 4.0f, inputRule.getCentreY()});
@@ -380,40 +337,18 @@ void EvilAmplifierEditor::layoutCanvas() {
     gateKnob.setBounds(knobs);
   }
 
-  // Amp: mode selector, then neural (left) and overdrive (right).
+  // Amp: the loaded model, as the cab shows its IR.
   {
-    auto b = ampPanel.reduced(14).withTrimmedTop(30);
-    auto modes = b.removeFromTop(30).withWidth(330);
-    for (auto &m : modeButtons) {
-      m.setBounds(modes.removeFromLeft(106));
-      modes.removeFromLeft(6);
-    }
-    b.removeFromTop(14);
-
-    overdriveArea = b.removeFromRight(290);
-    b.removeFromRight(28);
-    neuralArea = b;
-
-    auto n = neuralArea.withTrimmedTop(20);
-    modelName.setBounds(n.removeFromTop(28));
-    modelDetails.setBounds(n.removeFromTop(40));
-    n.removeFromTop(10);
-    auto buttons = n.removeFromTop(28);
+    auto b = ampPanel.reduced(14).withTrimmedTop(36);
+    modelName.setBounds(b.removeFromTop(28));
+    modelDetails.setBounds(b.removeFromTop(40));
+    b.removeFromTop(10);
+    auto buttons = b.removeFromTop(28);
     loadModelButton.setBounds(buttons.removeFromLeft(120));
     buttons.removeFromLeft(8);
     builtinModelButton.setBounds(buttons.removeFromLeft(84));
     buttons.removeFromLeft(8);
     unloadModelButton.setBounds(buttons.removeFromLeft(76));
-    n.removeFromTop(10);
-    normaliseButton.setBounds(n.removeFromTop(24).withWidth(200));
-
-    auto o = overdriveArea.withTrimmedTop(20);
-    auto osRow = o.removeFromBottom(26);
-    oversamplingLabel.setBounds(osRow.removeFromLeft(110));
-    oversamplingBox.setBounds(osRow.removeFromLeft(90));
-    o.removeFromBottom(6);
-    driveKnob.setBounds(o.removeFromLeft(o.getWidth() / 2));
-    toneKnob.setBounds(o);
   }
 
   // Cab
@@ -595,7 +530,7 @@ void EvilAmplifierEditor::refreshModelStatus() {
   case State::empty:
     modelName.setText("No model loaded", juce::dontSendNotification);
     modelDetails.setText("Load a .nam capture or pick a built-in one. Without "
-                         "a model the neural stage passes audio clean.",
+                         "a model the amp passes audio clean.",
                          juce::dontSendNotification);
     break;
   case State::loading:
@@ -618,8 +553,6 @@ void EvilAmplifierEditor::refreshModelStatus() {
       details << ", validation ESR " << formatEsr(i.validationEsr);
     if (i.gear.isNotEmpty())
       details = i.gear + "\n" + details;
-    if (!i.hasLoudness)
-      details << "\n(no loudness metadata: normalisation unavailable)";
     modelDetails.setText(details, juce::dontSendNotification);
     break;
   }
@@ -655,19 +588,6 @@ void EvilAmplifierEditor::refreshPresetList() {
   }
   presetBox.setSelectedItemIndex(presets.getCurrentIndex(),
                                  juce::dontSendNotification);
-}
-
-void EvilAmplifierEditor::refreshAmpSections() {
-  const int mode = juce::roundToInt(
-      audioProcessor.getState().getRawParameterValue(params::ampMode)->load());
-  for (auto *c : std::initializer_list<juce::Component *>{
-           &driveKnob, &toneKnob, &oversamplingBox, &oversamplingLabel})
-    c->setAlpha(mode == 1 ? 1.0f : 0.45f);
-  for (auto *c : std::initializer_list<juce::Component *>{
-           &modelName, &modelDetails, &loadModelButton, &builtinModelButton,
-           &unloadModelButton, &normaliseButton})
-    c->setAlpha(mode == 2 ? 1.0f : 0.45f);
-  canvas.repaint(ampPanel);
 }
 
 void EvilAmplifierEditor::chooseModelFile() {

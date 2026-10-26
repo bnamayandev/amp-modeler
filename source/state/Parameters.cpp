@@ -19,7 +19,7 @@ juce::NormalisableRange<float> range(float lo, float hi, float centre) {
   return r;
 }
 
-/** Unitless pedal knob shown 0-10, like the amp's tone. */
+/** Unitless pedal knob shown 0-10. */
 juce::AudioParameterFloatAttributes zeroToTen() {
   return juce::AudioParameterFloatAttributes().withStringFromValueFunction(
       [](float v, int) { return juce::String(v * 10.0f, 1); });
@@ -70,22 +70,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
       juce::ParameterID{gateThreshold, 1}, "Gate Threshold",
       juce::NormalisableRange<float>(-100.0f, -20.0f, 0.1f), -65.0f,
       decibels()));
-  layout.add(std::make_unique<Choice>(
-      juce::ParameterID{ampMode, 1}, "Amp",
-      juce::StringArray{"Off", "Overdrive", "Neural"}, 2));
-  layout.add(std::make_unique<Float>(
-      juce::ParameterID{drive, 1}, "Drive",
-      juce::NormalisableRange<float>(0.0f, 40.0f, 0.01f), 20.0f, decibels()));
-  layout.add(std::make_unique<Float>(
-      juce::ParameterID{tone, 1}, "Tone",
-      juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.5f,
-      juce::AudioParameterFloatAttributes().withStringFromValueFunction(
-          [](float v, int) { return juce::String(v * 10.0f, 1); })));
-  layout.add(std::make_unique<Choice>(juce::ParameterID{oversampling, 1},
-                                      "Oversampling",
-                                      juce::StringArray{"Off", "2x", "4x"}, 2));
-  layout.add(std::make_unique<Bool>(juce::ParameterID{normalise, 1},
-                                    "Normalise Model", true));
   layout.add(
       std::make_unique<Bool>(juce::ParameterID{cabOn, 1}, "Cabinet", true));
   for (size_t b = 0; b < eqBands.size(); ++b)
@@ -241,9 +225,7 @@ void upgradeLegacyEq(juce::XmlElement &saved, juce::StringRef tag) {
 Snapshot::Snapshot(juce::AudioProcessorValueTreeState &s)
     : input(raw(s, params::input)), gateOn(raw(s, params::gateOn)),
       gateThreshold(raw(s, params::gateThreshold)),
-      ampMode(raw(s, params::ampMode)), drive(raw(s, params::drive)),
-      tone(raw(s, params::tone)), oversampling(raw(s, params::oversampling)),
-      normalise(raw(s, params::normalise)), cabOn(raw(s, params::cabOn)),
+      cabOn(raw(s, params::cabOn)),
       output(raw(s, params::output)),
       transpose(raw(s, params::transpose)), wahOn(raw(s, params::wahOn)),
       wahPosition(raw(s, params::wahPosition)), wahAuto(raw(s, params::wahAuto)),
@@ -295,12 +277,6 @@ SignalChain::Settings Snapshot::read() const noexcept {
   s.inputDb = get(input);
   s.gateOn = get(gateOn) >= 0.5f;
   s.gateThresholdDb = get(gateThreshold);
-  s.amp.mode =
-      static_cast<AmpMode>(juce::jlimit(0, 2, juce::roundToInt(get(ampMode))));
-  s.amp.driveDb = get(drive);
-  s.amp.tone = get(tone);
-  s.amp.oversampling = juce::jlimit(0, 2, juce::roundToInt(get(oversampling)));
-  s.amp.normalise = get(normalise) >= 0.5f;
   s.cabOn = get(cabOn) >= 0.5f;
   for (size_t b = 0; b < eq.size(); ++b)
     s.eqDb[b] = get(eq[b]);

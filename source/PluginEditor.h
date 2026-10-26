@@ -41,7 +41,6 @@ private:
   void refreshStats();
   void refreshIrStatus();
   void refreshPresetList();
-  void refreshAmpSections();
   void chooseModelFile();
   void chooseIrFile();
   void showBuiltinModels();
@@ -76,19 +75,9 @@ private:
   gui::LevelMeter inputMeter;
 
   // Amp
-  juce::TextButton modeButtons[3]{juce::TextButton("off"),
-                                  juce::TextButton("overdrive"),
-                                  juce::TextButton("neural")};
-  std::unique_ptr<juce::ParameterAttachment> modeAttachment;
   juce::Label modelName, modelDetails;
   juce::TextButton loadModelButton{"load .nam..."},
       builtinModelButton{"built-in"}, unloadModelButton{"unload"};
-  juce::ToggleButton normaliseButton{"normalise level"};
-  juce::AudioProcessorValueTreeState::ButtonAttachment normaliseAttachment;
-  gui::Knob driveKnob, toneKnob;
-  juce::Label oversamplingLabel;
-  juce::ComboBox oversamplingBox;
-  juce::AudioProcessorValueTreeState::ComboBoxAttachment oversamplingAttachment;
 
   // Cab
   juce::Label irName, irDetails;
@@ -114,9 +103,8 @@ private:
   std::unique_ptr<juce::ParameterAttachment> transposeAttachment;
   juce::Label cpuLabel, latencyLabel;
 
-  juce::Rectangle<int> inputPanel, ampPanel, neuralArea, overdriveArea,
-      cabPanel, eqPanel, outputPanel, metronomeCaption, beatLeds,
-      transposeCaption;
+  juce::Rectangle<int> inputPanel, ampPanel, cabPanel, eqPanel, outputPanel,
+      metronomeCaption, beatLeds, transposeCaption;
   juce::Rectangle<float> gateLed;
   std::vector<double> tapTimes;
   std::uint32_t lastClickCount = 0;

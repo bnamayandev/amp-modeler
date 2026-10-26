@@ -11,10 +11,9 @@ trainer, and it loads any [Neural Amp Modeler](https://www.neuralampmodeler.com)
 guitar ─► input gain ─► noise gate ─► transposer ─► compressor ─► fuzz ─► overdrive ─┐
                                                                                      │
   ┌──────────────────────────────────────────────────────────────────────────────────┘
-  └─► AMP ─────────────────────────► cab IR ─► 9-band EQ ─► chorus ─► delay ─► reverb ─► output
-      ├─ Neural: NAM model at its trained rate                                  (+ metronome)
-      │  (band-limited resampling if the host differs)
-      └─ Overdrive: drive ─► [2x/4x oversampled tanh] ─► tone
+  └─► AMP: NAM model ──────────────► cab IR ─► 9-band EQ ─► chorus ─► delay ─► reverb ─► output
+      at its trained rate (band-limited                                      (+ metronome)
+      resampling if the host differs)
 ```
 
 ## Measured results
@@ -28,11 +27,10 @@ reproducible with the commands shown.
 | CPU cost, 128 samples @ 48 kHz | < 25% of the deadline | **7.7% mean, 10.7% p99** for the full chain with the standard WaveNet (`evil-cli bench`) |
 | ... at 44.1 kHz host (resampled) | | 9.1% mean, 13.6% p99 |
 | Real-time stability | 0 dropouts in 30 min | 30 simulated minutes: **0 of 675,000 blocks over deadline**, worst block 26% (see [stability](#stability)) |
-| Nothing allocates on the audio thread | | **0 allocations, 0 frees** over 6,000 blocks with live model, IR, mode and oversampling swaps (malloc interposed) |
+| Nothing allocates on the audio thread | | **0 allocations, 0 frees** over 6,000 blocks with live model, IR and pedal swaps (malloc interposed) |
 | Model accuracy (held-out ESR) | reported per capture | Blackstar HT-1: **0.0101** on 60 s never trained on (validation 0.0072) |
 | C++ matches PyTorch | | Same model in NAM Core: **0.010117** vs PyTorch **0.010117** held-out ESR; parity test max error 4.8e-7 |
-| Aliasing (overdrive, 3.1 kHz at 36 dB drive) | | inharmonic energy -19 dB (1x), -28 dB (2x), **-40 dB (4x)** |
-| Latency | reported to host | Neural: 0 samples at the model's own rate, 73 (1.7 ms) at 44.1 kHz. Overdrive: 0 / 3 / 4 samples at 1x / 2x / 4x |
+| Latency | reported to host | 0 samples at the model's own rate, 73 (1.7 ms) at 44.1 kHz |
 
 The brief also asks for blind A/B tests against the real amp. That needs listeners:
 `training/runs/ht1/renders/` (made by the trainer) holds the held-out DI, the real amp's
@@ -68,13 +66,12 @@ plugin where your DAW looks:
 
 - **Input** drives the amp (a NAM model expects roughly instrument level; turn up if your
   interface gain is low). **Gate** is the threshold; the LED is green when it's open.
-- **Amp**: *Neural* runs the loaded `.nam` model; *Overdrive* is the gray-box waveshaper
-  (Drive, Tone, oversampling Off/2x/4x); *Off* passes clean. Switching crossfades.
+- **Amp**: runs the loaded `.nam` model as it is, with nothing added and no level
+  adjustment. Models differ in loudness, so set **Output** to taste.
   - **Load .nam...** loads any NAM model (WaveNet, LSTM, A2, ... from ToneHunt/TONE3000, the
     official trainer, or `training/`). Loading happens off the audio thread and the switch
     crossfades over 40 ms. The panel shows the model's held-out ESR if its metadata has it.
-  - **Normalise level** uses the model's loudness metadata to bring it to -18 dBFS so
-    models are comparable.
+  - **Unload** plays with no model: the amp passes clean.
 - **Cabinet**: built-in synthetic 4x12, or **Load IR...** (WAV/AIFF/FLAC, any rate, mono or
   first channel of stereo, up to 2 s). IRs are energy-normalised and swap without clicks.
   Turn it off for models that already include a cab (mic'd captures).
@@ -168,12 +165,12 @@ The tests cover:
 - **Published models**: every example model shipped with NAM Core (WaveNet A1/A2, LSTM,
   slimmable, container) loads and runs; corrupt files fail with a message.
 - **Real-time safety**: heap allocations and frees on the audio thread are counted while
-  models, IRs, amp modes and oversampling change underneath. The required count is zero.
+  models, IRs and pedals change underneath. The required count is zero.
 - **Resampling**: in-band accuracy better than -60 dB, more than 60 dB rejection of content
   that would alias, block-size independence, and an identity model coming out delayed by
   exactly the reported latency at 44.1/48/96 kHz.
 - **DSP**: bit-exact pass-through with everything neutral, gate hysteresis and hold, EQ band
-  gains, oversampling reducing aliasing, IR swaps without discontinuities, mode switching.
+  gains, IR swaps without discontinuities.
 - **CPU budget**: the chain stays under 25% of the deadline (skipped on CI runners, where
   timing is noisy).
 
@@ -217,9 +214,8 @@ tests and CLI run exactly what the plugin runs.
   deleted on the message thread.
 - IRs are read, checked and normalised off the audio thread. `juce::dsp::Convolution` swaps
   them in with its own crossfade.
-- Every buffer is sized in `prepareToPlay`. Blocks bigger than announced are split. All
-  three oversamplers are built up front so switching factor never allocates. Coefficients
-  are computed with plain arithmetic (`juce::dsp::IIR::Coefficients` allocates).
+- Every buffer is sized in `prepareToPlay`. Blocks bigger than announced are split.
+  Coefficients are computed with plain arithmetic (`juce::dsp::IIR::Coefficients` allocates).
 - After `prepareToPlay`, every stage starts at the first block's settings instead of gliding
   from defaults. Later changes are smoothed or crossfaded.
 - Latency changes are reported to the host from the message thread. Bypass delays the dry
@@ -233,11 +229,11 @@ Nyquist). A FIFO of computed size guarantees exactly one output sample per input
 
 **Deviations from the brief, and why:**
 
-1. *Oversampling wraps the gray-box waveshaper, not the neural model.* Running a model at 2x
-   or 4x its training rate changes what it computes, as above. A NAM model is trained
-   against band-limited recordings at its own rate, which is also how the official NAM
-   plugin runs them. The overdrive is oversampled (2x/4x, low-latency polyphase IIR) as
-   specified.
+1. *No gray-box overdrive and no oversampling.* The amp is the NAM model alone, so nothing
+   colours its sound. Oversampling the model itself would be wrong: running it at 2x or 4x
+   its training rate changes what it computes, as above. A NAM model is trained against
+   band-limited recordings at its own rate, which is also how the official NAM plugin runs
+   them.
 2. *The bundled capture is a real amp, but not one I recorded.* There's no reamp rig here,
    so the bundled model uses the published Blackstar HT-1 reamp dataset (see
    `LICENSES.md`). The full own-capture workflow (signal generation, blip latency
@@ -250,9 +246,9 @@ Nyquist). A FIFO of computed size guarantees exactly one output sample per input
 ## Layout
 
 ```
-source/dsp/        SignalChain, AmpStage, ModelManager, NamModelRunner, StreamingResampler,
-                   Overdrive, CabSim, Equaliser, NoiseGate, Biquad, Pedals, ReverbPedal,
-                   PitchShifter, Metronome, DelayLine
+source/dsp/        SignalChain, ModelManager, NamModelRunner, StreamingResampler, CabSim,
+                   Equaliser, NoiseGate, Biquad, Pedals, ReverbPedal, PitchShifter,
+                   Metronome, DelayLine
 source/state/      parameters, presets
 source/gui/        look and feel, knobs, meters, pedal board
 source/            PluginProcessor, PluginEditor

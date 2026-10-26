@@ -53,10 +53,6 @@ public:
   int getLatencySamples() const noexcept { return latency; }
   bool isResampling() const noexcept { return resampling; }
 
-  /** Gain that brings the model to -18 dBFS for typical input, if its loudness
-   * is known. */
-  float getNormalisationGain() const noexcept { return normalisationGain; }
-
   const ModelInfo &getInfo() const noexcept { return info; }
 
 private:
@@ -65,7 +61,6 @@ private:
   std::unique_ptr<nam::DSP> model;
   ModelInfo info;
   double modelRate = 48000.0;
-  float normalisationGain = 1.0f;
 
   double preparedHostRate = 0.0;
   int preparedBlockSize = 0;

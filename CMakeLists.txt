@@ -66,12 +66,10 @@ set_target_properties(EvilAmplifierData PROPERTIES POSITION_INDEPENDENT_CODE ON)
 # consumer compiles it with its own JUCE module configuration.
 add_library(evil_core INTERFACE)
 target_sources(evil_core INTERFACE
-    source/dsp/AmpStage.cpp
     source/dsp/CabSim.cpp
     source/dsp/Metronome.cpp
     source/dsp/ModelManager.cpp
     source/dsp/NamModelRunner.cpp
-    source/dsp/Overdrive.cpp
     source/dsp/Pedals.cpp
     source/dsp/PitchShifter.cpp
     source/dsp/ReverbPedal.cpp

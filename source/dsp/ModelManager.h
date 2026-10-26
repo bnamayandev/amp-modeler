@@ -62,7 +62,7 @@ public:
 
   /** Audio thread: renders the active model (or passes dry if none). in/out may
    * alias. */
-  void process(const float *in, float *out, int n, bool normalise) noexcept;
+  void process(const float *in, float *out, int n) noexcept;
 
   /** Latency of the model currently playing; written by the audio thread. */
   int getActiveLatencySamples() const noexcept {
@@ -90,8 +90,8 @@ private:
 
   // Audio-thread helpers
   void pickUpPending() noexcept;
-  void render(NamModelRunner *runner, const float *in, float *out, int n,
-              float normaliseStart, float normaliseEnd) noexcept;
+  void render(NamModelRunner *runner, const float *in, float *out,
+              int n) noexcept;
   bool retire(NamModelRunner *runner) noexcept;
 
   // Handover: the loader stores, the audio thread exchanges. unloadToken means
@@ -107,9 +107,6 @@ private:
   NamModelRunner *fadingOut = nullptr;
   bool fading = false;
   int fadePosition = 0, fadeLength = 2048;
-  float normaliseAmount = 1.0f;
-  bool primed =
-      false; // snap the normalisation amount on the first block after prepare()
   std::vector<float> inputCopy, fadeBuffer;
   std::atomic<int> activeLatency{0};
 

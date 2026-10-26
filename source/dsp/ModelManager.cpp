@@ -211,7 +211,6 @@ void ModelManager::prepare(double sampleRate, int maxBlockSize) {
   inputCopy.assign((size_t)maxBlockSize, 0.0f);
   fadeBuffer.assign((size_t)maxBlockSize, 0.0f);
   fadeLength = std::max(1, (int)(0.04 * sampleRate));
-  primed = false;
 
   // Audio is stopped while preparing, so finishing a crossfade here is safe.
   if (fading) {
@@ -336,30 +335,15 @@ void ModelManager::pickUpPending() noexcept {
 }
 
 void ModelManager::render(NamModelRunner *runner, const float *in, float *out,
-                          int n, float normaliseStart,
-                          float normaliseEnd) noexcept {
+                          int n) noexcept {
   if (runner == nullptr) {
     std::memcpy(out, in, sizeof(float) * (size_t)n);
     return;
   }
   runner->process(in, out, n);
-
-  const float g = runner->getNormalisationGain();
-  if (juce::exactlyEqual(g, 1.0f))
-    return;
-  const float startGain = 1.0f + normaliseStart * (g - 1.0f);
-  const float endGain = 1.0f + normaliseEnd * (g - 1.0f);
-  if (juce::exactlyEqual(startGain, endGain)) {
-    juce::FloatVectorOperations::multiply(out, startGain, n);
-    return;
-  }
-  const float step = (endGain - startGain) / (float)n;
-  for (int i = 0; i < n; ++i)
-    out[i] *= startGain + step * (float)(i + 1);
 }
 
-void ModelManager::process(const float *in, float *out, int n,
-                           bool normalise) noexcept {
+void ModelManager::process(const float *in, float *out, int n) noexcept {
   jassert(n <= (int)inputCopy.size());
   n = std::min(n, (int)inputCopy.size());
   if (n <= 0)
@@ -368,24 +352,12 @@ void ModelManager::process(const float *in, float *out, int n,
   pickUpPending();
   std::memcpy(inputCopy.data(), in, sizeof(float) * (size_t)n);
 
-  // Toggling normalisation ramps the gain over ~50 ms instead of jumping.
-  if (!primed) {
-    normaliseAmount = normalise ? 1.0f : 0.0f;
-    primed = true;
-  }
-  const float normaliseStart = normaliseAmount;
-  const float maxStep =
-      (float)n / (0.05f * (float)std::max(1.0, specRateSeenByAudio));
-  const float target = normalise ? 1.0f : 0.0f;
-  normaliseAmount += std::clamp(target - normaliseAmount, -maxStep, maxStep);
-
-  render(active, inputCopy.data(), out, n, normaliseStart, normaliseAmount);
+  render(active, inputCopy.data(), out, n);
 
   if (!fading)
     return;
 
-  render(fadingOut, inputCopy.data(), fadeBuffer.data(), n, normaliseStart,
-         normaliseAmount);
+  render(fadingOut, inputCopy.data(), fadeBuffer.data(), n);
   for (int i = 0; i < n; ++i) {
     const float t =
         std::min(1.0f, (float)(fadePosition + i + 1) / (float)fadeLength);

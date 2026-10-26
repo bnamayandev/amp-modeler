@@ -1,7 +1,6 @@
 #include "TestHelpers.h"
 #include "dsp/Equaliser.h"
 #include "dsp/NoiseGate.h"
-#include "dsp/Overdrive.h"
 #include "dsp/SignalChain.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -14,7 +13,6 @@ namespace {
 SignalChain::Settings neutral() {
   SignalChain::Settings s;
   s.gateOn = false;
-  s.amp.mode = AmpMode::off;
   s.cabOn = false;
   return s;
 }
@@ -53,8 +51,9 @@ TEST_CASE("With everything neutral the chain is a bit-exact pass-through",
 TEST_CASE("Blocks larger than prepared are split, not overrun", "[chain]") {
   SignalChain chain;
   chain.prepare(48000.0, 64);
+  juce::String error;
+  REQUIRE(chain.getModels().loadSynchronously("builtin:BlackstarHT1", error));
   auto s = neutral();
-  s.amp.mode = AmpMode::overdrive;
   std::vector<float> x = sine(440.0, 48000.0, 5000);
   chain.process(x.data(), (int)x.size(), s); // 5000 > 64
   for (float v : x)
@@ -151,71 +150,6 @@ TEST_CASE("EQ bands combine as their filters predict and glide back to flat",
   const auto original = y;
   eq.process(y.data(), (int)y.size(), Equaliser::Gains{});
   CHECK(y == original);
-}
-
-TEST_CASE("Oversampling the waveshaper suppresses aliasing", "[overdrive]") {
-  // A 3.1 kHz tone driven hard makes harmonics far above 24 kHz. Without
-  // oversampling they fold back to inharmonic frequencies; measure energy away
-  // from the harmonic series.
-  const double rate = 48000.0, f0 = 3100.0;
-  auto aliasEnergy = [&](int oversampling) {
-    Overdrive od;
-    od.prepare(rate, 256);
-    auto x = sine(f0, rate, 1 << 16, 0.5f);
-    for (size_t start = 0; start < x.size(); start += 256)
-      od.process(x.data() + start, 256, 36.0f, 1.0f, oversampling);
-
-    // Window and FFT the steady-state part.
-    constexpr int order = 15, size = 1 << order;
-    juce::dsp::FFT fft(order);
-    std::vector<float> spectrum(2 * size, 0.0f);
-    for (int i = 0; i < size; ++i)
-      spectrum[(size_t)i] =
-          x[x.size() - (size_t)size + (size_t)i] *
-          (0.5f - 0.5f * std::cos(2.0f * juce::MathConstants<float>::pi * i /
-                                  (size - 1)));
-    fft.performFrequencyOnlyForwardTransform(spectrum.data());
-
-    double inharmonic = 0.0, total = 0.0;
-    for (int bin = 1; bin < size / 2; ++bin) {
-      const double freq = bin * rate / size;
-      const double power =
-          (double)spectrum[(size_t)bin] * spectrum[(size_t)bin];
-      total += power;
-      const double nearestHarmonic = std::round(freq / f0) * f0;
-      if (std::abs(freq - nearestHarmonic) > 60.0)
-        inharmonic += power;
-    }
-    return 10.0 * std::log10(inharmonic / total);
-  };
-
-  const double none = aliasEnergy(0), x2 = aliasEnergy(1), x4 = aliasEnergy(2);
-  INFO("aliasing relative to total: 1x " << none << " dB, 2x " << x2
-                                         << " dB, 4x " << x4 << " dB");
-  CHECK(x2 < none - 6.0);
-  CHECK(x4 < none - 12.0);
-}
-
-TEST_CASE("Switching amp mode and oversampling mid-stream stays finite and "
-          "click-free",
-          "[chain]") {
-  SignalChain chain;
-  chain.prepare(48000.0, 128);
-  juce::String error;
-  REQUIRE(chain.getModels().loadSynchronously("builtin:BlackstarHT1", error));
-  auto s = neutral();
-  s.cabOn = true;
-  auto x = sine(110.0, 48000.0, 48000 * 2, 0.2f);
-  for (size_t start = 0, block = 0; start < x.size(); start += 128, ++block) {
-    if (block % 50 == 0) {
-      s.amp.mode = static_cast<AmpMode>((block / 50) % 3);
-      s.amp.oversampling = (int)((block / 100) % 3);
-    }
-    chain.process(x.data() + start, 128, s);
-  }
-  for (float v : x)
-    REQUIRE(std::isfinite(v));
-  CHECK(rms(x.data(), (int)x.size()) > 1.0e-3);
 }
 
 TEST_CASE("Swapping the cab IR at runtime does not click", "[cab]") {

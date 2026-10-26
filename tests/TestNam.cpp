@@ -24,14 +24,13 @@ std::vector<float> renderThroughManager(const juce::String &source,
   const std::vector<float> silence((size_t)block, 0.0f);
   std::vector<float> scratch((size_t)block);
   for (int i = 0; i < (int)(0.1 * rate) / block + 1; ++i)
-    models.process(silence.data(), scratch.data(), block, false);
+    models.process(silence.data(), scratch.data(), block);
   REQUIRE(models.getActiveLatencySamples() == 0);
 
   std::vector<float> out(in.size());
   for (size_t start = 0; start < in.size(); start += (size_t)block)
     models.process(in.data() + start, out.data() + start,
-                   (int)std::min<size_t>((size_t)block, in.size() - start),
-                   false);
+                   (int)std::min<size_t>((size_t)block, in.size() - start));
   return out;
 }
 } // namespace
@@ -81,7 +80,7 @@ TEST_CASE("Every example model shipped with NAM Core loads and runs", "[nam]") {
       }
       auto in = sine(220.0, 48000.0, 48000, 0.3f);
       for (size_t start = 0; start < in.size(); start += 128)
-        models.process(in.data() + start, in.data() + start, 128, true);
+        models.process(in.data() + start, in.data() + start, 128);
       bool finite = true;
       for (float x : in)
         finite = finite && std::isfinite(x);
@@ -135,7 +134,7 @@ TEST_CASE("Async loads hand over to the audio thread and superseded loads are "
        i < 2000 && models.getStatus().state != ModelManager::State::ready;
        ++i) {
     juce::Thread::sleep(5);
-    models.process(buffer.data(), buffer.data(), 64, true);
+    models.process(buffer.data(), buffer.data(), 64);
   }
   REQUIRE(models.getStatus().state == ModelManager::State::ready);
   CHECK(models.getStatus().info.source == "builtin:BlackstarHT1");

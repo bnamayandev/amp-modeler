@@ -10,11 +10,6 @@ namespace evil::params {
 inline constexpr const char *input = "input";
 inline constexpr const char *gateOn = "gate_on";
 inline constexpr const char *gateThreshold = "gate_threshold";
-inline constexpr const char *ampMode = "amp_mode";
-inline constexpr const char *drive = "drive";
-inline constexpr const char *tone = "tone";
-inline constexpr const char *oversampling = "oversampling";
-inline constexpr const char *normalise = "normalise";
 inline constexpr const char *cabOn = "cab_on";
 // Graphic EQ bands, low to high (Equaliser::frequencies).
 inline constexpr std::array<const char *, Equaliser::numBands> eqBands{
@@ -112,11 +107,6 @@ private:
   std::atomic<float> *input;
   std::atomic<float> *gateOn;
   std::atomic<float> *gateThreshold;
-  std::atomic<float> *ampMode;
-  std::atomic<float> *drive;
-  std::atomic<float> *tone;
-  std::atomic<float> *oversampling;
-  std::atomic<float> *normalise;
   std::atomic<float> *cabOn;
   std::array<std::atomic<float> *, Equaliser::numBands> eq;
   std::atomic<float> *output;

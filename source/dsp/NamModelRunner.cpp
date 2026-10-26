@@ -19,9 +19,6 @@ NamModelRunner::NamModelRunner(std::unique_ptr<nam::DSP> m, ModelInfo i)
   if (model->HasLoudness()) {
     info.hasLoudness = true;
     info.loudnessDb = model->GetLoudness();
-    constexpr double targetLoudnessDb = -18.0;
-    normalisationGain =
-        (float)std::pow(10.0, (targetLoudnessDb - info.loudnessDb) / 20.0);
   }
 }
 

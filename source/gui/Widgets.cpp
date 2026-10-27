@@ -94,10 +94,10 @@ void LevelMeter::paint(juce::Graphics &g) {
   bounds.removeFromTop(5.0f);
 
   if (clipped) {
-    g.setColour(colours::accent.withAlpha(0.35f));
+    g.setColour(colours::accent().withAlpha(0.35f));
     g.fillRoundedRectangle(clipLed.expanded(2.0f), 3.0f);
   }
-  g.setColour(clipped ? colours::accent : colours::lineSoft);
+  g.setColour(clipped ? colours::accent() : colours::lineSoft);
   g.fillRoundedRectangle(clipLed, 2.0f);
 
   g.setColour(colours::lineSoft);
@@ -117,7 +117,7 @@ void LevelMeter::paint(juce::Graphics &g) {
     g.fillRoundedRectangle(bar, 2.0f);
     const auto hot = bar.withBottom(juce::jmax(bar.getY(), toY(-6.0f)));
     if (!hot.isEmpty()) {
-      g.setColour(colours::accent);
+      g.setColour(colours::accent());
       g.fillRect(hot);
     }
   }
@@ -136,7 +136,7 @@ void Footswitch::paintButton(juce::Graphics &g, bool highlighted, bool down) {
       juce::Rectangle<float>(size, size).withCentre(getLocalBounds().toFloat().getCentre());
 
   // Hairline bezel, accent when engaged.
-  g.setColour(on ? colours::accent.withAlpha(highlighted ? 0.9f : 0.7f)
+  g.setColour(on ? colours::accent().withAlpha(highlighted ? 0.9f : 0.7f)
               : highlighted ? muted.withAlpha(0.7f)
                             : line);
   g.drawEllipse(outer.reduced(0.5f), 1.0f);
@@ -182,7 +182,7 @@ juce::Rectangle<float> drawPanel(juce::Graphics &g, juce::Rectangle<int> bounds,
     const auto numberFont = mono(11.0f);
     const auto numberText = juce::String(number).paddedLeft('0', 2);
     g.setFont(numberFont);
-    g.setColour(accent);
+    g.setColour(accent());
     g.drawText(numberText,
                row.removeFromLeft(juce::GlyphArrangement::getStringWidth(
                                       numberFont, numberText) +
@@ -195,7 +195,7 @@ juce::Rectangle<float> drawPanel(juce::Graphics &g, juce::Rectangle<int> bounds,
   const auto titleText = title.toLowerCase();
   const auto pill = row.removeFromLeft(
       juce::GlyphArrangement::getStringWidth(titleFont, titleText) + 18.0f);
-  g.setColour(accent.withAlpha(0.28f));
+  g.setColour(accent().withAlpha(0.28f));
   g.fillRect(pill);
   g.setColour(text);
   g.setFont(titleFont);

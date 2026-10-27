@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "gui/EvilLookAndFeel.h"
 #include "gui/PedalBoard.h"
+#include "gui/Settings.h"
 #include "gui/Widgets.h"
 
 namespace evil {
@@ -45,6 +46,8 @@ private:
   void chooseIrFile();
   void showBuiltinModels();
   void showBuiltinIrs();
+  void showSettings();
+  void applyAccent();
   void savePresetDialog();
   void stepPreset(int delta);
   void showPage(int page);
@@ -54,6 +57,7 @@ private:
   void stepTranspose(int delta);
 
   EvilAmplifierProcessor &audioProcessor;
+  juce::SharedResourcePointer<gui::Settings> settings; // sets the accent first
   gui::EvilLookAndFeel lookAndFeel;
   Canvas canvas{*this};
   juce::TooltipWindow tooltips{this, 600};
@@ -62,6 +66,7 @@ private:
   juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"};
   juce::ComboBox presetBox;
   juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"save"};
+  juce::TextButton settingsButton{"settings"};
 
   // Pages: the amp controls live on ampPage (laid out in canvas coordinates),
   // the pedals on the board.

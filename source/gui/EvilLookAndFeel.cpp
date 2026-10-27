@@ -3,6 +3,22 @@
 #include <EvilBinaryData.h>
 
 namespace evil::gui {
+namespace colours {
+namespace {
+float accentHue = defaultAccentHue;
+}
+
+juce::Colour accentAt(float hue) {
+  return juce::Colour::fromHSL(hue, 0.74f, 0.63f, 1.0f);
+}
+juce::Colour accent() { return accentAt(accentHue); }
+juce::Colour accentHover() {
+  return juce::Colour::fromHSL(accentHue, 0.78f, 0.74f, 1.0f);
+}
+float getAccentHue() { return accentHue; }
+void setAccentHue(float hue) { accentHue = hue - std::floor(hue); }
+} // namespace colours
+
 namespace {
 juce::Typeface::Ptr load(const char *data, int size) {
   return juce::Typeface::createSystemTypefaceFor(data, (size_t)size);
@@ -15,7 +31,7 @@ juce::Font makeFont(const juce::Typeface::Ptr &face, float size,
 }
 
 /** Accent at a given strength over transparent, like CSS color-mix(). */
-juce::Colour tint(float amount) { return colours::accent.withAlpha(amount); }
+juce::Colour tint(float amount) { return colours::accent().withAlpha(amount); }
 
 void drawGlow(juce::Graphics &g, juce::Point<float> centre, float radius) {
   juce::ColourGradient glow(tint(0.55f), centre, tint(0.0f),
@@ -47,7 +63,7 @@ void drawFader(juce::Graphics &g, juce::Rectangle<float> bounds,
     g.setColour(line);
     g.fillRect(x - 6.0f, from - 0.5f, 12.0f, 1.0f);
   }
-  const auto valueColour = !enabled ? mutedSoft : hot ? accentHover : accent;
+  const auto valueColour = !enabled ? mutedSoft : hot ? accentHover() : accent();
   g.setColour(valueColour);
   g.fillRoundedRectangle(x - 1.25f, juce::jmin(from, sliderPos), 2.5f,
                          std::abs(sliderPos - from), 1.25f);
@@ -123,9 +139,7 @@ EvilLookAndFeel::EvilLookAndFeel() {
             juce::Colours::transparentBlack);
   setColour(juce::Slider::textBoxBackgroundColourId,
             juce::Colours::transparentBlack);
-  setColour(juce::Slider::textBoxHighlightColourId, tint(0.32f));
   setColour(juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
-  setColour(juce::TextButton::buttonOnColourId, tint(0.18f));
   setColour(juce::TextButton::textColourOffId, textSoft);
   setColour(juce::TextButton::textColourOnId, text);
   setColour(juce::ComboBox::backgroundColourId,
@@ -136,22 +150,28 @@ EvilLookAndFeel::EvilLookAndFeel() {
   setColour(juce::PopupMenu::backgroundColourId, panel);
   setColour(juce::PopupMenu::textColourId, textSoft);
   setColour(juce::PopupMenu::headerTextColourId, muted);
-  setColour(juce::PopupMenu::highlightedBackgroundColourId, tint(0.22f));
   setColour(juce::PopupMenu::highlightedTextColourId, text);
   setColour(juce::ToggleButton::textColourId, textSoft);
   setColour(juce::TextEditor::backgroundColourId, panel);
   setColour(juce::TextEditor::textColourId, text);
-  setColour(juce::TextEditor::highlightColourId, tint(0.32f));
   setColour(juce::TextEditor::highlightedTextColourId, text);
   setColour(juce::TextEditor::outlineColourId, line);
-  setColour(juce::TextEditor::focusedOutlineColourId, accent);
   setColour(juce::AlertWindow::backgroundColourId, panel);
   setColour(juce::AlertWindow::textColourId, textSoft);
   setColour(juce::AlertWindow::outlineColourId, line);
-  setColour(juce::CaretComponent::caretColourId, accent);
   setColour(juce::TooltipWindow::backgroundColourId, panel);
   setColour(juce::TooltipWindow::textColourId, textSoft);
   setColour(juce::TooltipWindow::outlineColourId, line);
+  refreshAccent();
+}
+
+void EvilLookAndFeel::refreshAccent() {
+  setColour(juce::Slider::textBoxHighlightColourId, tint(0.32f));
+  setColour(juce::TextButton::buttonOnColourId, tint(0.18f));
+  setColour(juce::PopupMenu::highlightedBackgroundColourId, tint(0.22f));
+  setColour(juce::TextEditor::highlightColourId, tint(0.32f));
+  setColour(juce::TextEditor::focusedOutlineColourId, colours::accent());
+  setColour(juce::CaretComponent::caretColourId, colours::accent());
 }
 
 void EvilLookAndFeel::drawRotarySlider(juce::Graphics &g, int x, int y,
@@ -181,7 +201,7 @@ void EvilLookAndFeel::drawRotarySlider(juce::Graphics &g, int x, int y,
       slider.getMinimum() < 0.0 && slider.getMaximum() > 0.0 &&
       std::abs(slider.getMinimum() + slider.getMaximum()) < 1.0e-6;
   const auto from = bipolar ? (startAngle + endAngle) * 0.5f : startAngle;
-  const auto valueColour = !enabled ? mutedSoft : hot ? accentHover : accent;
+  const auto valueColour = !enabled ? mutedSoft : hot ? accentHover() : accent();
   juce::Path value;
   value.addCentredArc(centre.x, centre.y, arcRadius, arcRadius, 0.0f,
                       juce::jmin(from, angle), juce::jmax(from, angle), true);
@@ -263,14 +283,14 @@ void EvilLookAndFeel::drawToggleButton(juce::Graphics &g,
   // Pill switch: hairline when off, accent-tinted with a glowing thumb when on.
   g.setColour(on ? tint(0.28f) : juce::Colours::transparentBlack);
   g.fillRoundedRectangle(track, 7.0f);
-  g.setColour(on ? accent : highlighted ? muted : line);
+  g.setColour(on ? accent() : highlighted ? muted : line);
   g.drawRoundedRectangle(track.reduced(0.5f), 6.5f, 1.0f);
 
   const auto thumb = juce::Point<float>(
       on ? track.getRight() - 7.0f : track.getX() + 7.0f, track.getCentreY());
   if (on)
     drawGlow(g, thumb, 9.0f);
-  g.setColour(on ? (highlighted ? accentHover : accent)
+  g.setColour(on ? (highlighted ? accentHover() : accent())
                  : (highlighted ? muted : mutedSoft));
   g.fillEllipse(juce::Rectangle<float>(8.0f, 8.0f).withCentre(thumb));
 
@@ -292,7 +312,7 @@ void EvilLookAndFeel::drawButtonBackground(juce::Graphics &g,
     const auto under =
         button.getLocalBounds().toFloat().removeFromBottom(2.0f).reduced(4.0f, 0.0f);
     if (button.getToggleState()) {
-      g.setColour(accent);
+      g.setColour(accent());
       g.fillRect(under);
     } else if (highlighted) {
       g.setColour(muted.withAlpha(0.5f));
@@ -307,7 +327,7 @@ void EvilLookAndFeel::drawButtonBackground(juce::Graphics &g,
     edge = tint(0.7f);
   } else if (isPrimary(button)) {
     fill = tint(down ? 0.34f : highlighted ? 0.26f : 0.15f);
-    edge = highlighted ? accent : tint(0.4f);
+    edge = highlighted ? accent() : tint(0.4f);
   } else {
     fill = text.withAlpha(down ? 0.08f : highlighted ? 0.04f : 0.0f);
     edge = highlighted ? muted.withAlpha(0.7f) : line;
@@ -334,7 +354,7 @@ void EvilLookAndFeel::drawButtonText(juce::Graphics &g,
   }
   const bool primary = isPrimary(button) && !button.getToggleState();
   g.setColour(!button.isEnabled()           ? mutedSoft
-              : primary && highlighted      ? accentHover
+              : primary && highlighted      ? accentHover()
               : primary                     ? text
               : button.getToggleState()     ? text
               : highlighted                 ? text
@@ -353,7 +373,7 @@ void EvilLookAndFeel::drawComboBox(juce::Graphics &g, int width, int height,
   const bool hot = box.isEnabled() && box.isMouseOver(true);
   g.setColour(hot ? text.withAlpha(0.04f) : juce::Colours::transparentBlack);
   g.fillRoundedRectangle(bounds, 6.0f);
-  g.setColour(box.hasKeyboardFocus(true) ? accent
+  g.setColour(box.hasKeyboardFocus(true) ? accent()
               : hot                      ? muted.withAlpha(0.7f)
                                          : line);
   g.drawRoundedRectangle(bounds, 6.0f, 1.0f);
@@ -365,7 +385,7 @@ void EvilLookAndFeel::drawComboBox(juce::Graphics &g, int width, int height,
                         arrowZone.getCentreY() - 1.75f);
   arrow.lineTo(arrowZone.getCentreX(), arrowZone.getCentreY() + 1.75f);
   arrow.lineTo(arrowZone.getCentreX() + 3.5f, arrowZone.getCentreY() - 1.75f);
-  g.setColour(hot ? accent : mutedSoft);
+  g.setColour(hot ? accent() : mutedSoft);
   g.strokePath(arrow, juce::PathStrokeType(1.25f, juce::PathStrokeType::curved,
                                            juce::PathStrokeType::rounded));
 }
@@ -377,10 +397,22 @@ void EvilLookAndFeel::drawPopupMenuBackground(juce::Graphics &g, int width,
   g.drawRect(0, 0, width, height, 1);
 }
 
+void EvilLookAndFeel::drawCallOutBoxBackground(juce::CallOutBox &,
+                                               juce::Graphics &g,
+                                               const juce::Path &path,
+                                               juce::Image &) {
+  juce::DropShadow(juce::Colours::black.withAlpha(0.45f), 14, {0, 4})
+      .drawForPath(g, path);
+  g.setColour(colours::panel);
+  g.fillPath(path);
+  g.setColour(colours::line);
+  g.strokePath(path, juce::PathStrokeType(1.0f));
+}
+
 void EvilLookAndFeel::drawCornerResizer(juce::Graphics &g, int w, int h,
                                         bool isMouseOver,
                                         bool isMouseDragging) {
-  g.setColour(isMouseDragging ? colours::accent
+  g.setColour(isMouseDragging ? colours::accent()
               : isMouseOver   ? colours::muted
                               : colours::mutedSoft);
   for (float i = 0.3f; i < 1.0f; i += 0.3f)
@@ -443,7 +475,7 @@ juce::Label *EvilLookAndFeel::createSliderTextBox(juce::Slider &slider) {
                    juce::Colours::transparentBlack);
   label->setColour(juce::Label::backgroundColourId,
                    juce::Colours::transparentBlack);
-  label->setColour(juce::Label::outlineWhenEditingColourId, colours::accent);
+  label->setColour(juce::Label::outlineWhenEditingColourId, colours::accent());
   return label;
 }
 } // namespace evil::gui

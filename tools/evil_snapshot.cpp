@@ -5,7 +5,9 @@
 //
 // Writes editor.png (default size), editor@1.5x.png, stretched.png, which
 // simulates a window manager forcing the window to an odd size, to check the
-// layout scales uniformly, and pedals.png: the pedal page with a few pedals on.
+// layout scales uniformly, pedals.png: the pedal page with a few pedals on,
+// and settings.png: the settings popover open, with a blue accent. The saved
+// accent is ignored, so every shot starts from the default.
 
 #include "PluginEditor.h"
 
@@ -22,6 +24,17 @@ bool save(juce::Component &c, const juce::File &file, float scale) {
             << image.getWidth() << "x" << image.getHeight() << ")" << std::endl;
   return ok;
 }
+
+juce::Component *findButton(juce::Component &root, const juce::String &text) {
+  for (auto *child : root.getChildren()) {
+    if (auto *b = dynamic_cast<juce::Button *>(child);
+        b != nullptr && b->getButtonText() == text)
+      return b;
+    if (auto *found = findButton(*child, text))
+      return found;
+  }
+  return nullptr;
+}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -33,6 +46,10 @@ int main(int argc, char **argv) {
   const auto dir =
       juce::File::getCurrentWorkingDirectory().getChildFile(argv[1]);
   dir.createDirectory();
+
+  // Held for the whole run, so editors don't reload the saved accent.
+  juce::SharedResourcePointer<evil::gui::Settings> settings;
+  evil::gui::colours::setAccentHue(evil::gui::colours::defaultAccentHue);
 
   evil::EvilAmplifierProcessor processor;
   processor.prepareToPlay(48000.0, 128);
@@ -65,6 +82,21 @@ int main(int argc, char **argv) {
   processor.editorPage = 1;
   editor.reset(processor.createEditor());
   ok = save(*editor, dir.getChildFile("pedals.png"), 1.5f) && ok;
+
+  // Not settings->setAccentHue(), which would save it.
+  evil::gui::colours::setAccentHue(215.0f / 360.0f);
+  editor.reset();
+  processor.editorPage = 0;
+  editor.reset(processor.createEditor());
+  if (auto *button = findButton(*editor, "settings")) {
+    evil::gui::SettingsPanel panel(*settings);
+    juce::CallOutBox box(panel, button->getBounds(),
+                         button->getParentComponent());
+    ok = save(*editor, dir.getChildFile("settings.png"), 1.5f) && ok;
+  } else {
+    std::cout << "FAILED: no settings button" << std::endl;
+    ok = false;
+  }
 
   editor.reset();
   processor.releaseResources();

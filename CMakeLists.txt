@@ -118,6 +118,7 @@ target_sources(EvilAmplifier PRIVATE
     source/PipeWireJack.cpp
     source/gui/EvilLookAndFeel.cpp
     source/gui/PedalBoard.cpp
+    source/gui/Settings.cpp
     source/gui/Widgets.cpp)
 target_compile_definitions(EvilAmplifier PUBLIC ${EVIL_JUCE_DEFINITIONS})
 target_link_libraries(EvilAmplifier
@@ -155,6 +156,7 @@ if(EVIL_BUILD_TOOLS)
         source/PipeWireJack.cpp
         source/gui/EvilLookAndFeel.cpp
         source/gui/PedalBoard.cpp
+        source/gui/Settings.cpp
         source/gui/Widgets.cpp)
     target_compile_definitions(evil-snapshot PRIVATE
         ${EVIL_JUCE_DEFINITIONS}

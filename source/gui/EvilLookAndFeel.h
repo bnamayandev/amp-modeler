@@ -14,13 +14,17 @@ inline const juce::Colour mutedSoft{0xff6f6a5e};  // faintest text, idle marks
 inline const juce::Colour line = text.withAlpha(0.15f);     // dividers
 inline const juce::Colour lineSoft = text.withAlpha(0.08f); // faint dividers
 
-// The one vivid hue. Every accent tint (pills, glows, highlights) is mixed
-// down from these two rather than defined separately.
-constexpr float accentHue = 350.0f / 360.0f;
-inline const juce::Colour accent =
-    juce::Colour::fromHSL(accentHue, 0.74f, 0.63f, 1.0f);
-inline const juce::Colour accentHover =
-    juce::Colour::fromHSL(accentHue, 0.78f, 0.74f, 1.0f);
+// The one vivid hue, chosen in settings. Every accent tint (pills, glows,
+// highlights) is mixed down from these two rather than defined separately.
+constexpr float defaultAccentHue = 350.0f / 360.0f;
+juce::Colour accent();
+juce::Colour accentHover();
+/** The accent as it would look at another hue (0..1), e.g. for swatches. */
+juce::Colour accentAt(float hue);
+float getAccentHue();
+/** Message thread only. Open editors repaint through gui::Settings, which is
+    what normally calls this. */
+void setAccentHue(float hue);
 } // namespace colours
 
 /** The embedded Inter and JetBrains Mono faces, shared by all open editors. */
@@ -48,6 +52,9 @@ class EvilLookAndFeel final : public juce::LookAndFeel_V4 {
 public:
   EvilLookAndFeel();
 
+  /** Re-applies the colour ids that hold the accent; call after it changes. */
+  void refreshAccent();
+
   void drawRotarySlider(juce::Graphics &, int x, int y, int width, int height,
                         float sliderPos, float startAngle, float endAngle,
                         juce::Slider &) override;
@@ -66,6 +73,9 @@ public:
                     juce::ComboBox &) override;
   void drawPopupMenuBackground(juce::Graphics &, int width,
                                int height) override;
+  void drawCallOutBoxBackground(juce::CallOutBox &, juce::Graphics &,
+                                const juce::Path &, juce::Image &) override;
+  int getCallOutBoxBorderSize(const juce::CallOutBox &) override { return 14; }
   void drawCornerResizer(juce::Graphics &, int w, int h, bool isMouseOver,
                          bool isMouseDragging) override;
   void drawTooltip(juce::Graphics &, const juce::String &text, int width,

@@ -58,6 +58,9 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   savePreset.setTooltip("Save the current settings as a user preset");
   gui::setPrimary(savePreset);
   refreshPresetList();
+  canvas.addAndMakeVisible(settingsButton);
+  settingsButton.onClick = [this] { showSettings(); };
+  settingsButton.setTooltip("Accent colour, for every instance");
 
   // Input
   for (auto *c : std::initializer_list<juce::Component *>{
@@ -147,7 +150,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
                                juce::dontSendNotification);
         transposeLabel.setColour(juce::Label::textColourId,
                                  st == 0 ? gui::colours::muted
-                                         : gui::colours::accent);
+                                         : gui::colours::accent());
       });
   transposeAttachment->sendInitialUpdate();
 
@@ -162,6 +165,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   latencyLabel.setTooltip("Latency reported to the host");
 
   audioProcessor.getModels().addChangeListener(this);
+  settings->addChangeListener(this);
   refreshModelStatus();
   refreshIrStatus();
   refreshStats();
@@ -183,6 +187,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
 EvilAmplifierEditor::~EvilAmplifierEditor() {
   stopTimer();
   audioProcessor.getModels().removeChangeListener(this);
+  settings->removeChangeListener(this);
   setLookAndFeel(nullptr);
 }
 
@@ -207,7 +212,7 @@ void EvilAmplifierEditor::paintCanvas(juce::Graphics &g) {
   {
     const auto font = gui::sans(25.0f, true, -0.035f);
     const auto evilWidth = juce::GlyphArrangement::getStringWidth(font, "evil");
-    g.setColour(background.interpolatedWith(accent, 0.32f));
+    g.setColour(background.interpolatedWith(accent(), 0.32f));
     g.fillRect(juce::Rectangle<float>(18.0f, 19.0f, evilWidth + 6.0f, 23.0f));
     g.setFont(font);
     g.setColour(text);
@@ -243,11 +248,11 @@ void EvilAmplifierEditor::paintCanvas(juce::Graphics &g) {
       gateLed.getCentre())); // gap in the rule
   if (gateOpen) {
     g.setGradientFill(juce::ColourGradient(
-        accent.withAlpha(0.55f), gateLed.getCentre(), accent.withAlpha(0.0f),
+        accent().withAlpha(0.55f), gateLed.getCentre(), accent().withAlpha(0.0f),
         gateLed.getCentre().translated(10.0f, 0.0f), true));
     g.fillEllipse(gateLed.expanded(6.0f));
   }
-  g.setColour(gateOpen ? accent : gateEnabled ? mutedSoft : lineSoft);
+  g.setColour(gateOpen ? accent() : gateEnabled ? mutedSoft : lineSoft);
   g.fillEllipse(gateLed);
   if (!gateEnabled) {
     g.setColour(line);
@@ -276,6 +281,7 @@ void EvilAmplifierEditor::layoutCanvas() {
   nextPreset.setBounds(header.removeFromLeft(30));
   header.removeFromLeft(12);
   savePreset.setBounds(header.removeFromLeft(70));
+  settingsButton.setBounds(header.removeFromRight(84));
 
   // Footer: metronome on the left; transposer and stats on the right.
   {
@@ -413,12 +419,12 @@ void EvilAmplifierEditor::paintFooter(juce::Graphics &g) {
         {(float)beatLeds.getX() + 5.5f + 11.0f * (float)i,
          (float)beatLeds.getCentreY()});
     if (i == current && flashing)
-      gui::drawLed(g, led, true, i == 0 ? accent : text);
+      gui::drawLed(g, led, true, i == 0 ? accent() : text);
     else if (i == current) {
       g.setColour(muted);
       g.fillEllipse(led);
     } else
-      gui::drawLed(g, led, false, accent);
+      gui::drawLed(g, led, false, accent());
   }
 }
 
@@ -519,8 +525,22 @@ void EvilAmplifierEditor::refreshStats() {
       juce::dontSendNotification);
 }
 
-void EvilAmplifierEditor::changeListenerCallback(juce::ChangeBroadcaster *) {
+void EvilAmplifierEditor::changeListenerCallback(
+    juce::ChangeBroadcaster *source) {
+  if (source == &settings.get())
+    applyAccent();
+  else
+    refreshModelStatus();
+}
+
+void EvilAmplifierEditor::applyAccent() {
+  lookAndFeel.refreshAccent();
+  sendLookAndFeelChange(); // slider value boxes take the new edit outline
+  // Labels coloured by state.
+  transposeAttachment->sendInitialUpdate();
   refreshModelStatus();
+  refreshIrStatus();
+  repaint();
 }
 
 void EvilAmplifierEditor::refreshModelStatus() {
@@ -558,7 +578,7 @@ void EvilAmplifierEditor::refreshModelStatus() {
   }
   }
   modelDetails.setColour(juce::Label::textColourId,
-                         status.state == State::error ? gui::colours::accent
+                         status.state == State::error ? gui::colours::accent()
                                                       : gui::colours::muted);
 }
 
@@ -572,7 +592,7 @@ void EvilAmplifierEditor::refreshIrStatus() {
           : juce::String("Zero-latency convolution; IR swaps crossfade"),
       juce::dontSendNotification);
   irDetails.setColour(juce::Label::textColourId, error.isNotEmpty()
-                                                     ? gui::colours::accent
+                                                     ? gui::colours::accent()
                                                      : gui::colours::muted);
 }
 
@@ -656,6 +676,12 @@ void EvilAmplifierEditor::showBuiltinIrs() {
         audioProcessor.loadIr(CabSim::builtinPrefix + names[result - 1], error);
         refreshIrStatus();
       });
+}
+
+void EvilAmplifierEditor::showSettings() {
+  juce::CallOutBox::launchAsynchronously(
+      std::make_unique<gui::SettingsPanel>(*settings),
+      settingsButton.getBounds(), &canvas);
 }
 
 void EvilAmplifierEditor::stepPreset(int delta) {

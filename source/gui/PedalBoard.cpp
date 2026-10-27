@@ -106,7 +106,7 @@ void Pedal::paint(juce::Graphics &g) {
   g.setColour(colours::panel);
   g.fillRect(led.expanded(8.0f, 0.0f).withHeight(2.0f).withCentre(
       led.getCentre())); // gap in the rule
-  drawLed(g, led, isOn(), colours::accent);
+  drawLed(g, led, isOn(), colours::accent());
 
   g.setFont(caption());
   g.setColour(isOn() ? colours::textSoft : colours::mutedSoft);
@@ -186,7 +186,7 @@ void PedalBoard::paint(juce::Graphics &g) {
       (float)ampBlockWidth, (float)juce::jmin(20, ampSlot.getHeight()));
   g.setColour(background);
   g.fillRoundedRectangle(amp, 6.0f);
-  g.setColour(accent.withAlpha(0.4f));
+  g.setColour(accent().withAlpha(0.4f));
   g.drawRoundedRectangle(amp.reduced(0.5f), 6.0f, 1.0f);
   g.setColour(text);
   g.setFont(mono(11.5f, true));

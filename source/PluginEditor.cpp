@@ -179,7 +179,12 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   setResizable(true, true);
   setResizeLimits(designWidth * 3 / 5, designHeight * 3 / 5, designWidth * 2,
                   designHeight * 2);
-  getConstrainer()->setFixedAspectRatio((double)designWidth / designHeight);
+  // A locked aspect ratio makes drag-resizing in a host feel right, but the
+  // standalone's window manager may impose any size (tiling, maximise, snap);
+  // the constrainer would then shrink the editor inside the bigger window and
+  // leave it unpainted. resized() letterboxes, so any size works there.
+  if (p.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+    getConstrainer()->setFixedAspectRatio((double)designWidth / designHeight);
   setSize(designWidth, designHeight);
   startTimerHz(30);
 }

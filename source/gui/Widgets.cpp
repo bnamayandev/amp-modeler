@@ -52,7 +52,7 @@ Fader::Fader(juce::AudioProcessorValueTreeState &state,
   title.setColour(juce::Label::textColourId, colours::muted);
   value.setFont(mono(10.5f));
 
-  // Compact, to fit a narrow column: "+3.5", "0.0", "-12.0".
+  // Compact, to fit a narrow column: "+3.5", "0.0", "-10.0".
   slider.onValueChange = [this] {
     const auto v = slider.getValue();
     const bool flat = std::abs(v) < 0.05;
@@ -125,6 +125,103 @@ void LevelMeter::paint(juce::Graphics &g) {
   g.setColour(colours::panel);
   for (float db : {0.0f, -12.0f, -24.0f, -36.0f, -48.0f})
     g.fillRect(bounds.getX(), toY(db), bounds.getWidth(), 1.0f);
+}
+
+Spectrum::Spectrum(double low, double high) : lowHz(low), highHz(high) {
+  levelsDb.fill(floorDb);
+  setInterceptsMouseClicks(false, false);
+}
+
+void Spectrum::push(const float *data, int n) noexcept {
+  for (int i = 0; i < n; ++i) {
+    history[(size_t)historyWrite] = std::isfinite(data[i]) ? data[i] : 0.0f;
+    historyWrite = (historyWrite + 1) & (fftSize - 1);
+  }
+  fresh = fresh || n > 0;
+}
+
+void Spectrum::refresh(double sampleRate, float secondsSinceLast) {
+  const float fall = 48.0f * secondsSinceLast; // dB per refresh
+  if (!fresh || sampleRate <= 0.0) {
+    // Nothing playing: let the curve sink away rather than freeze.
+    bool moving = false;
+    for (auto &l : levelsDb) {
+      moving = moving || l > floorDb;
+      l = juce::jmax(floorDb, l - fall);
+    }
+    if (moving)
+      repaint();
+    return;
+  }
+  fresh = false;
+
+  // Oldest sample first, windowed.
+  const auto split = (size_t)historyWrite;
+  std::copy(history.begin() + (long)split, history.end(), fftData.begin());
+  std::copy(history.begin(), history.begin() + (long)split,
+            fftData.begin() + (long)(fftSize - split));
+  window.multiplyWithWindowingTable(fftData.data(), (size_t)fftSize);
+  fft.performFrequencyOnlyForwardTransform(fftData.data(), true);
+
+  // A full-scale sine reads 0 dB (Hann halves the peak bin), tilted +3 dB per
+  // octave about 1 kHz so a guitar's falling top end still reads clearly.
+  const double binHz = sampleRate / fftSize;
+  const int lastBin = fftSize / 2;
+  const auto binDb = [&](double bin) {
+    const auto i = juce::jlimit(0, lastBin - 1, (int)bin);
+    const auto t = (float)juce::jlimit(0.0, 1.0, bin - i);
+    const float mag = fftData[(size_t)i] + t * (fftData[(size_t)i + 1] -
+                                                fftData[(size_t)i]);
+    return juce::Decibels::gainToDecibels(mag * 4.0f / fftSize, -200.0f);
+  };
+  const double octaves = std::log2(highHz / lowHz);
+  const double halfStep = 0.5 * octaves / (numPoints - 1);
+  for (int p = 0; p < numPoints; ++p) {
+    const double octave = octaves * p / (numPoints - 1);
+    const double hz = lowHz * std::exp2(octave);
+    const double from = lowHz * std::exp2(octave - halfStep) / binHz;
+    const double to = lowHz * std::exp2(octave + halfStep) / binHz;
+    float db = binDb(hz / binHz);
+    for (int b = (int)std::ceil(from); b <= (int)to && b <= lastBin; ++b)
+      db = juce::jmax(db, binDb(b)); // wide at the top: the loudest bin
+    db += 3.0f * (float)std::log2(hz / 1000.0);
+
+    auto &l = levelsDb[(size_t)p];
+    l = db > l ? l + 0.6f * (db - l) : juce::jmax(db, l - fall);
+    l = juce::jlimit(floorDb, topDb, l);
+  }
+  repaint();
+}
+
+void Spectrum::paint(juce::Graphics &g) {
+  const auto bounds = getLocalBounds().toFloat();
+  const auto point = [&](int p) {
+    return juce::Point<float>(
+        juce::jmap((float)p, 0.0f, (float)(numPoints - 1), bounds.getX(),
+                   bounds.getRight()),
+        juce::jmap(levelsDb[(size_t)p], floorDb, topDb, bounds.getBottom(),
+                   bounds.getY()));
+  };
+
+  // Smooth: quadratic segments through the midpoints between points.
+  juce::Path curve;
+  curve.startNewSubPath(point(0));
+  for (int p = 1; p < numPoints - 1; ++p) {
+    const auto here = point(p), next = point(p + 1);
+    curve.quadraticTo(here, (here + next) * 0.5f);
+  }
+  curve.lineTo(point(numPoints - 1));
+
+  auto fill = curve;
+  fill.lineTo(bounds.getBottomRight());
+  fill.lineTo(bounds.getBottomLeft());
+  fill.closeSubPath();
+  g.setGradientFill(juce::ColourGradient(
+      colours::text.withAlpha(0.10f), 0.0f, bounds.getY(),
+      colours::text.withAlpha(0.02f), 0.0f, bounds.getBottom(), false));
+  g.fillPath(fill);
+  g.setColour(colours::muted.withAlpha(0.55f));
+  g.strokePath(curve, juce::PathStrokeType(1.0f));
 }
 
 void Footswitch::paintButton(juce::Graphics &g, bool highlighted, bool down) {

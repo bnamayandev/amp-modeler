@@ -10,7 +10,7 @@
 namespace evil {
 /** Post-cab nine-band graphic EQ: peaking bands an octave apart from 50 Hz to
    12.8 kHz (the classic seven-band guitar series, 100 Hz - 6.4 kHz, plus an
-   octave either side), each +/-12 dB. Gains glide towards their targets and a
+   octave either side), each +/-10 dB. Gains glide towards their targets and a
    moving band's coefficients are recomputed every 32 samples, so sweeping a
    fader doesn't zipper. */
 class Equaliser {
@@ -20,7 +20,7 @@ public:
   static constexpr std::array<double, numBands> frequencies{
       50.0, 100.0, 200.0, 400.0, 800.0, 1600.0, 3200.0, 6400.0, 12800.0};
   static constexpr double q = 1.41; // one octave wide at half gain
-  static constexpr float maxGainDb = 12.0f;
+  static constexpr float maxGainDb = 10.0f;
 
   void prepare(double newSampleRate) noexcept {
     sampleRate = newSampleRate;

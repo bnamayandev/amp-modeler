@@ -95,7 +95,7 @@ TEST_CASE("EQ bands hit their target gains and flat EQ is exact", "[eq]") {
     float gainDb;
   };
   const auto c = GENERATE(Case{0, 6.0f}, Case{0, -9.0f}, Case{4, 6.0f},
-                          Case{6, -12.0f}, Case{8, 12.0f}, Case{8, -6.0f});
+                          Case{6, -10.0f}, Case{8, 10.0f}, Case{8, -6.0f});
   const double freq = Equaliser::frequencies[c.band];
   Equaliser::Gains gains{};
   gains[c.band] = c.gainDb;
@@ -119,7 +119,7 @@ TEST_CASE("EQ bands hit their target gains and flat EQ is exact", "[eq]") {
 
 TEST_CASE("EQ bands combine as their filters predict and glide back to flat",
           "[eq]") {
-  const Equaliser::Gains gains{6.0f, -3.0f, 0.0f, 4.5f, -12.0f,
+  const Equaliser::Gains gains{6.0f, -3.0f, 0.0f, 4.5f, -10.0f,
                                2.0f, 0.0f,  -6.0f, 9.0f};
   for (const double freq : {75.0, 300.0, 800.0, 2400.0, 9000.0}) {
     double expectedDb = 0.0;

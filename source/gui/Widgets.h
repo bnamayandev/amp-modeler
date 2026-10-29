@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
 
 namespace evil::gui {
 /** Rotary knob attached to a parameter, with its name above and value below. */
@@ -44,6 +45,32 @@ public:
 private:
   float levelDb = -100.0f;
   bool clipped = false;
+};
+
+/** Live spectrum on a log-frequency axis spanning lowHz..highHz, drawn as a
+    soft filled curve (behind the EQ faders). Feed it samples as they arrive,
+    then call refresh() at the GUI rate. */
+class Spectrum final : public juce::Component {
+public:
+  Spectrum(double lowHz, double highHz);
+  void push(const float *data, int n) noexcept;
+  void refresh(double sampleRate, float secondsSinceLast);
+  void paint(juce::Graphics &) override;
+
+private:
+  static constexpr int fftOrder = 13, fftSize = 1 << fftOrder;
+  static constexpr int numPoints = 160;
+  static constexpr float floorDb = -90.0f, topDb = -6.0f;
+
+  double lowHz, highHz;
+  juce::dsp::FFT fft{fftOrder};
+  juce::dsp::WindowingFunction<float> window{
+      (size_t)fftSize, juce::dsp::WindowingFunction<float>::hann, false};
+  std::array<float, fftSize> history{};
+  std::array<float, 2 * fftSize> fftData{};
+  std::array<float, numPoints> levelsDb;
+  int historyWrite = 0;
+  bool fresh = false; // samples pushed since the last refresh
 };
 
 /** Round stomp switch. Its toggle state is the pedal's on/off. */

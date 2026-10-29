@@ -522,6 +522,24 @@ struct ParameterHost final : juce::AudioProcessor {
 };
 } // namespace
 
+TEST_CASE("EQ faders have a parabolic taper, fine around 0 dB", "[eq]") {
+  ParameterHost host;
+  auto *p = host.state.getParameter(params::eqBands[4]);
+  const auto range = p->getNormalisableRange();
+  CHECK(range.start == -Equaliser::maxGainDb);
+  CHECK(range.end == Equaliser::maxGainDb);
+  CHECK(range.convertFrom0to1(0.5f) == 0.0f);
+  CHECK(range.convertFrom0to1(0.75f) == Catch::Approx(Equaliser::maxGainDb / 4));
+  CHECK(range.convertFrom0to1(0.25f) == Catch::Approx(-Equaliser::maxGainDb / 4));
+  for (const float db : {-10.0f, -3.5f, -0.25f, 0.0f, 1.0f, 6.0f, 10.0f})
+    CHECK(range.convertFrom0to1(range.convertTo0to1(db)) ==
+          Catch::Approx(db).margin(1.0e-4));
+  host.set(params::eqBands[4], 2.347f);
+  CHECK(host.get(params::eqBands[4]) == Catch::Approx(2.35f));
+  host.set(params::eqBands[4], 12.0f); // beyond the range: clamped
+  CHECK(host.get(params::eqBands[4]) == Equaliser::maxGainDb);
+}
+
 TEST_CASE("Presets set the pedals but leave transpose and the metronome alone",
           "[presets]") {
   ParameterHost host;

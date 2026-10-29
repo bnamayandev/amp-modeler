@@ -19,6 +19,24 @@ juce::NormalisableRange<float> range(float lo, float hi, float centre) {
   return r;
 }
 
+/** Bipolar +/-maxDb with a square-law (parabolic) taper: fine control around
+   0 dB, where small cuts and boosts live, and the extremes still reachable. */
+juce::NormalisableRange<float> parabolic(float maxDb) {
+  return {-maxDb, maxDb,
+          [](float lo, float hi, float x) {
+            const float u = 2.0f * x - 1.0f;
+            return juce::jmap(u * std::abs(u), -1.0f, 1.0f, lo, hi);
+          },
+          [](float lo, float hi, float v) {
+            const float u = juce::jlimit(-1.0f, 1.0f,
+                                         juce::jmap(v, lo, hi, -1.0f, 1.0f));
+            return 0.5f + 0.5f * std::copysign(std::sqrt(std::abs(u)), u);
+          },
+          [](float lo, float hi, float v) { // 0.01 dB steps
+            return juce::jlimit(lo, hi, std::round(v * 100.0f) / 100.0f);
+          }};
+}
+
 /** Unitless pedal knob shown 0-10. */
 juce::AudioParameterFloatAttributes zeroToTen() {
   return juce::AudioParameterFloatAttributes().withStringFromValueFunction(
@@ -75,9 +93,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   for (size_t b = 0; b < eqBands.size(); ++b)
     layout.add(std::make_unique<Float>(
         juce::ParameterID{eqBands[b], 1}, "EQ " + eqBandLabel(b) + "Hz",
-        juce::NormalisableRange<float>(-Equaliser::maxGainDb,
-                                       Equaliser::maxGainDb, 0.01f),
-        0.0f, decibels()));
+        parabolic(Equaliser::maxGainDb), 0.0f, decibels()));
   layout.add(std::make_unique<Float>(juce::ParameterID{output, 1}, "Output",
                                      range(-40.0f, 12.0f, 0.0f), 0.0f,
                                      decibels()));

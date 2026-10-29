@@ -90,7 +90,11 @@ private:
   juce::ToggleButton cabButton{"cabinet on"};
   juce::AudioProcessorValueTreeState::ButtonAttachment cabAttachment;
 
-  // EQ + output
+  // EQ + output. The analyser spans the fader columns, an octave each, so
+  // every band's fader sits over its centre frequency.
+  gui::Spectrum eqSpectrum{
+      Equaliser::frequencies.front() / juce::MathConstants<double>::sqrt2,
+      Equaliser::frequencies.back() * juce::MathConstants<double>::sqrt2};
   std::array<std::unique_ptr<gui::Fader>, Equaliser::numBands> eqFaders;
   gui::Knob outputKnob;
   gui::LevelMeter outputMeter;

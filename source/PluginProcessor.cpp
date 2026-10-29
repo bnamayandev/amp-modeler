@@ -119,6 +119,7 @@ void EvilAmplifierProcessor::processBlock(juce::AudioBuffer<float> &buffer,
     inputPeak.store(inPeak, std::memory_order_relaxed);
 
   chain.process(mono, n, snapshot.read());
+  analyserTap.push(mono, n);
   metronome.process(mono, n, snapshot.readMetronome(metronomeRunning.load()));
 
   // Never pass non-finite samples to the host (or to someone's ears).

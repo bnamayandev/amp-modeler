@@ -75,7 +75,9 @@ plugin where your DAW looks:
 - **Cabinet**: built-in synthetic 4x12, or **Load IR...** (WAV/AIFF/FLAC, any rate, mono or
   first channel of stereo, up to 2 s). IRs are energy-normalised and swap without clicks.
   Turn it off for models that already include a cab (mic'd captures).
-- **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz, ±12 dB each.
+- **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz, ±10 dB each.
+  The faders have a parabolic taper, fine around 0 dB, over a live spectrum of
+  the output.
   Presets and sessions saved with the old bass/mid/treble EQ load with the nearest
   band settings.
 - **Pedals** (the *pedals* tab; its label counts the pedals that are on): two rows in signal

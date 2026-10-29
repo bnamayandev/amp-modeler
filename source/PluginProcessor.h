@@ -1,5 +1,6 @@
 #pragma once
 
+#include "dsp/SampleTap.h"
 #include "dsp/SignalChain.h"
 #include "state/Parameters.h"
 #include "state/PresetManager.h"
@@ -90,6 +91,9 @@ public:
     return outputPeak.exchange(0.0f, std::memory_order_relaxed);
   }
   bool isGateOpen() const noexcept { return chain.isGateOpen(); }
+  /** The amp's output (after the EQ, before the metronome) for the analyser. */
+  using AnalyserTap = SampleTap<32768>;
+  AnalyserTap &getAnalyserTap() noexcept { return analyserTap; }
 
   // Metronome: whether it runs is not saved, so a session never opens clicking.
   bool isMetronomeRunning() const noexcept { return metronomeRunning.load(); }
@@ -119,6 +123,7 @@ private:
   PresetManager presets;
   CpuStats cpu;
   std::atomic<float> inputPeak{0.0f}, outputPeak{0.0f};
+  AnalyserTap analyserTap;
 
   double currentSampleRate = 0.0;
   std::atomic<bool> prepared{false};

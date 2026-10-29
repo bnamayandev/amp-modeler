@@ -94,6 +94,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
       "Load a cabinet impulse response (WAV, AIFF or FLAC)");
 
   // EQ + output
+  ampPage.addAndMakeVisible(eqSpectrum); // first, so it sits behind the faders
   for (size_t b = 0; b < eqFaders.size(); ++b) {
     eqFaders[b] = std::make_unique<gui::Fader>(p.getState(), params::eqBands[b],
                                                params::eqBandLabel(b));
@@ -384,6 +385,8 @@ void EvilAmplifierEditor::layoutCanvas() {
     };
     for (size_t i = 0; i < eqFaders.size(); ++i)
       eqFaders[i]->setBounds(b.withLeft(edge(i)).withRight(edge(i + 1)));
+    // The fader tracks' height, between their value and title labels.
+    eqSpectrum.setBounds(b.withTrimmedTop(18).withTrimmedBottom(18));
   }
 
   // Output
@@ -437,6 +440,13 @@ void EvilAmplifierEditor::timerCallback() {
   constexpr float interval = 1.0f / 30.0f;
   inputMeter.pushPeak(audioProcessor.takeInputPeak(), interval);
   outputMeter.pushPeak(audioProcessor.takeOutputPeak(), interval);
+
+  std::array<float, 4096> samples;
+  auto &tap = audioProcessor.getAnalyserTap();
+  for (int n; (n = tap.pull(samples.data(), (int)samples.size())) > 0;)
+    eqSpectrum.push(samples.data(), n);
+  if (ampPage.isVisible())
+    eqSpectrum.refresh(audioProcessor.getSampleRate(), interval);
 
   const auto clicks = audioProcessor.getMetronome().getClickCount();
   if (clicks != lastClickCount) {

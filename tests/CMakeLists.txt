@@ -7,7 +7,8 @@ target_sources(evil_tests PRIVATE
     TestPedals.cpp
     TestResampler.cpp
     TestNam.cpp
-    TestRealtime.cpp)
+    TestRealtime.cpp
+    TestTuner.cpp)
 
 target_compile_definitions(evil_tests PRIVATE
     ${EVIL_JUCE_DEFINITIONS}

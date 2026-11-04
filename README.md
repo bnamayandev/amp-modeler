@@ -100,6 +100,16 @@ plugin where your DAW looks:
     dry signal.
   - All twelve pedals and the transposer together add ~1.5% of the block deadline
     (`evil-cli bench --pedals all --transpose -2`).
+- **Tuner** (the *tuner* tab): pick a built-in tuning, or set any string to any note. String 1
+  is the thinnest. Picking a note name takes the octave closest to that string's usual pitch,
+  so string 1 to D is D4 and string 4 to Gb is Gb3; **-** and **+** move it an octave.
+  - **Save** keeps the notes under a name, in `tunings.xml` in `~/.config/EvilAmplifier/` (Linux),
+    `~/Library/EvilAmplifier/` (macOS) or `%APPDATA%\EvilAmplifier\` (Windows). Presets and
+    sessions don't change your tuning or your saved tunings.
+  - It works out which string you're playing. If a string is too far off for that, click its
+    number to lock onto it: the meter then says how far to go, in semitones if need be.
+  - It hears the guitar itself, before the input gain, gate and transposer, and keeps working
+    while the plugin is bypassed. Your sound isn't muted while you tune.
 - **Transpose** (bottom right): ±12 semitones, e.g. -1 for E-flat tuning. Polyphonic, with
   splices aligned to the waveform; it costs ~16 ms of delay while on, and 0 ("off") bypasses
   it completely.
@@ -149,7 +159,7 @@ It also smoke-tests the training pipeline end to end.
 ## Test and measure
 
 ```bash
-build/tests/evil_tests_artefacts/Release/evil_tests          # 19 test cases
+build/tests/evil_tests_artefacts/Release/evil_tests          # 50 test cases
 pluginval --strictness-level 10 --validate-in-process "build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3"
 
 cli=build/evil-cli_artefacts/Release/evil-cli
@@ -173,6 +183,9 @@ The tests cover:
   exactly the reported latency at 44.1/48/96 kHz.
 - **DSP**: bit-exact pass-through with everything neutral, gate hysteresis and hold, EQ band
   gains, IR swaps without discontinuities.
+- **Tuner**: pitch within a cent from E1 to E6 at 44.1 to 192 kHz, plucked strings without
+  octave errors even with a weak fundamental, silence on hum and noise; note and tuning
+  parsing, picking the octave, and saved tunings surviving a reload or a damaged file.
 - **CPU budget**: the chain stays under 25% of the deadline (skipped on CI runners, where
   timing is noisy).
 
@@ -250,9 +263,9 @@ Nyquist). A FIFO of computed size guarantees exactly one output sample per input
 ```
 source/dsp/        SignalChain, ModelManager, NamModelRunner, StreamingResampler, CabSim,
                    Equaliser, NoiseGate, Biquad, Pedals, ReverbPedal, PitchShifter,
-                   Metronome, DelayLine
-source/state/      parameters, presets
-source/gui/        look and feel, knobs, meters, pedal board
+                   PitchDetector, Metronome, DelayLine
+source/state/      parameters, presets, tunings
+source/gui/        look and feel, knobs, meters, pedal board, tuner page
 source/            PluginProcessor, PluginEditor
 resources/         bundled model (+ training report), synthetic cab IR, factory presets
 tests/             Catch2 suite, allocation tracker, parity data

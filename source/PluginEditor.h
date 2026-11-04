@@ -4,6 +4,7 @@
 #include "gui/EvilLookAndFeel.h"
 #include "gui/PedalBoard.h"
 #include "gui/Settings.h"
+#include "gui/TunerPage.h"
 #include "gui/Widgets.h"
 
 namespace evil {
@@ -63,7 +64,7 @@ private:
   juce::TooltipWindow tooltips{this, 600};
 
   // Header
-  juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"};
+  juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"}, tunerTab{"tuner"};
   juce::ComboBox presetBox;
   juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"save"};
   juce::TextButton settingsButton{"settings"};
@@ -72,6 +73,7 @@ private:
   // the pedals on the board.
   juce::Component ampPage;
   gui::PedalBoard pedalBoard;
+  gui::TunerPage tunerPage;
 
   // Input
   gui::Knob inputKnob, gateKnob;

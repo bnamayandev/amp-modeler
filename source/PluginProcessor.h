@@ -94,6 +94,10 @@ public:
   /** The amp's output (after the EQ, before the metronome) for the analyser. */
   using AnalyserTap = SampleTap<32768>;
   AnalyserTap &getAnalyserTap() noexcept { return analyserTap; }
+  /** The input before any gain, gate or transposer, so the tuner hears the
+      string itself. */
+  using TunerTap = SampleTap<32768>;
+  TunerTap &getTunerTap() noexcept { return tunerTap; }
 
   // Metronome: whether it runs is not saved, so a session never opens clicking.
   bool isMetronomeRunning() const noexcept { return metronomeRunning.load(); }
@@ -124,6 +128,7 @@ private:
   CpuStats cpu;
   std::atomic<float> inputPeak{0.0f}, outputPeak{0.0f};
   AnalyserTap analyserTap;
+  TunerTap tunerTap;
 
   double currentSampleRate = 0.0;
   std::atomic<bool> prepared{false};

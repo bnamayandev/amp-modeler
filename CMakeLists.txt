@@ -71,12 +71,14 @@ target_sources(evil_core INTERFACE
     source/dsp/ModelManager.cpp
     source/dsp/NamModelRunner.cpp
     source/dsp/Pedals.cpp
+    source/dsp/PitchDetector.cpp
     source/dsp/PitchShifter.cpp
     source/dsp/ReverbPedal.cpp
     source/dsp/SignalChain.cpp
     source/dsp/StreamingResampler.cpp
     source/state/Parameters.cpp
-    source/state/PresetManager.cpp)
+    source/state/PresetManager.cpp
+    source/state/Tunings.cpp)
 target_include_directories(evil_core INTERFACE source)
 target_link_libraries(evil_core INTERFACE
     # NAM Core registers each architecture (WaveNet, LSTM, ...) from a static initialiser in
@@ -119,6 +121,7 @@ target_sources(EvilAmplifier PRIVATE
     source/gui/EvilLookAndFeel.cpp
     source/gui/PedalBoard.cpp
     source/gui/Settings.cpp
+    source/gui/TunerPage.cpp
     source/gui/Widgets.cpp)
 target_compile_definitions(EvilAmplifier PUBLIC ${EVIL_JUCE_DEFINITIONS})
 target_link_libraries(EvilAmplifier
@@ -157,6 +160,7 @@ if(EVIL_BUILD_TOOLS)
         source/gui/EvilLookAndFeel.cpp
         source/gui/PedalBoard.cpp
         source/gui/Settings.cpp
+        source/gui/TunerPage.cpp
         source/gui/Widgets.cpp)
     target_compile_definitions(evil-snapshot PRIVATE
         ${EVIL_JUCE_DEFINITIONS}

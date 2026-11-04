@@ -36,13 +36,15 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
                       withItems(beatsBox, {"2/4", "3/4", "4/4", "5/4", "6/4",
                                            "7/4"})) {
   // Header
-  for (auto [page, tab] : {std::pair{0, &ampTab}, std::pair{1, &pedalsTab}}) {
+  for (auto [page, tab] : {std::pair{0, &ampTab}, std::pair{1, &pedalsTab},
+                           std::pair{2, &tunerTab}}) {
     gui::setTab(*tab);
     tab->onClick = [this, page = page] { showPage(page); };
     canvas.addAndMakeVisible(tab);
   }
   ampTab.setTooltip("Amp, cabinet and EQ");
   pedalsTab.setTooltip("Stomp boxes before and after the amp");
+  tunerTab.setTooltip("Tune your guitar, to standard or a tuning of your own");
   canvas.addAndMakeVisible(presetBox);
   presetBox.setTooltip("Presets: factory first, then yours");
   presetBox.onChange = [this] {
@@ -107,6 +109,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   ampPage.setInterceptsMouseClicks(false, true);
   canvas.addAndMakeVisible(ampPage);
   canvas.addChildComponent(pedalBoard);
+  canvas.addChildComponent(tunerPage);
 
   // Footer: metronome
   canvas.addAndMakeVisible(metronomeButton);
@@ -273,16 +276,18 @@ void EvilAmplifierEditor::layoutCanvas() {
   auto header = design.withHeight(headerHeight).reduced(16, 14);
   header.removeFromLeft(196);
   {
-    auto tabs = header.removeFromLeft(156).withBottom(headerHeight);
+    auto tabs = header.removeFromLeft(220).withBottom(headerHeight);
     ampTab.setBounds(tabs.removeFromLeft(60));
     tabs.removeFromLeft(4);
-    pedalsTab.setBounds(tabs);
+    pedalsTab.setBounds(tabs.removeFromLeft(92));
+    tabs.removeFromLeft(4);
+    tunerTab.setBounds(tabs);
   }
   header.removeFromLeft(24);
   header = header.withSizeKeepingCentre(header.getWidth(), 30);
   prevPreset.setBounds(header.removeFromLeft(30));
   header.removeFromLeft(6);
-  presetBox.setBounds(header.removeFromLeft(280));
+  presetBox.setBounds(header.removeFromLeft(256));
   header.removeFromLeft(6);
   nextPreset.setBounds(header.removeFromLeft(30));
   header.removeFromLeft(12);
@@ -324,6 +329,7 @@ void EvilAmplifierEditor::layoutCanvas() {
                   .withTrimmedBottom(footerHeight)
                   .reduced(16, 12);
   pedalBoard.setBounds(body);
+  tunerPage.setBounds(body);
   auto top = body.removeFromTop(262);
   body.removeFromTop(12);
   auto bottom = body;
@@ -448,6 +454,14 @@ void EvilAmplifierEditor::timerCallback() {
   if (ampPage.isVisible())
     eqSpectrum.refresh(audioProcessor.getSampleRate(), interval);
 
+  // Drained on every page, so the tuner never starts on stale samples.
+  auto &tunerTap = audioProcessor.getTunerTap();
+  for (int n; (n = tunerTap.pull(samples.data(), (int)samples.size())) > 0;)
+    if (tunerPage.isVisible())
+      tunerPage.push(samples.data(), n);
+  if (tunerPage.isVisible())
+    tunerPage.refresh(audioProcessor.getSampleRate(), interval);
+
   const auto clicks = audioProcessor.getMetronome().getClickCount();
   if (clicks != lastClickCount) {
     lastClickCount = clicks;
@@ -472,12 +486,15 @@ void EvilAmplifierEditor::timerCallback() {
 }
 
 void EvilAmplifierEditor::showPage(int page) {
-  page = juce::jlimit(0, 1, page);
+  page = juce::jlimit(0, 2, page);
   audioProcessor.editorPage = page;
   ampPage.setVisible(page == 0);
   pedalBoard.setVisible(page == 1);
+  tunerPage.setVisible(page == 2);
+  tunerPage.reset();
   ampTab.setToggleState(page == 0, juce::dontSendNotification);
   pedalsTab.setToggleState(page == 1, juce::dontSendNotification);
+  tunerTab.setToggleState(page == 2, juce::dontSendNotification);
   refreshPedalsTab();
   canvas.repaint();
 }

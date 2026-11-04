@@ -118,6 +118,7 @@ void EvilAmplifierProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   if (inPeak > inputPeak.load(std::memory_order_relaxed))
     inputPeak.store(inPeak, std::memory_order_relaxed);
 
+  tunerTap.push(mono, n);
   chain.process(mono, n, snapshot.read());
   analyserTap.push(mono, n);
   metronome.process(mono, n, snapshot.readMetronome(metronomeRunning.load()));
@@ -153,6 +154,9 @@ void EvilAmplifierProcessor::processBlockBypassed(
     buffer.clear();
     return;
   }
+
+  if (buffer.getNumChannels() > 0) // tuning doesn't need the amp on
+    tunerTap.push(buffer.getReadPointer(0), n);
 
   const int latency =
       juce::jlimit(0, bypassDelayCapacity / 2, reportedLatency.load());

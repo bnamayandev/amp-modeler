@@ -8,10 +8,11 @@
 //
 // Chain options:
 //   --model <path|builtin:Name>  --ir <path|builtin:Name>
-//   --no-cab  --no-gate  --input-db X  --output-db X  --block N
+//   --no-model  --no-cab  --no-gate  --input-db X  --output-db X  --block N
 //   --exact-tanh (default: NAM's fast tanh, as in the plugin)
 //   --transpose N (semitones)  --pedals wah,comp,fuzz,od,dist,boost,phaser,
 //   flanger,chorus,trem,delay,reverb|all (each at its default settings)
+//   --set od_drive=0.3,od_tone=0.6,eq_800=2  (knobs and EQ bands, by parameter id)
 //
 // `esr` runs the model alone (no gate, cab or EQ) at the file's sample rate,
 // so a 44.1 kHz file exercises the resampling path, and compares against the
@@ -52,7 +53,7 @@ Options parse(int argc, char **argv) {
   static const juce::StringArray valued{
       "--model",   "--ir",   "--input-db", "--output-db", "--block",
       "--seconds", "--rate", "--csv",      "--out",       "--transpose",
-      "--pedals"};
+      "--pedals",  "--set"};
   Options o;
   for (int i = 2; i < argc; ++i) {
     const juce::String arg(argv[i]);
@@ -133,6 +134,41 @@ SignalChain::Settings settingsFrom(const Options &o) {
   s.tremolo.on = pedal("trem");
   s.delay.on = pedal("delay");
   s.reverb.on = pedal("reverb");
+
+  const std::map<juce::String, float *> knobs{
+      {"comp_sustain", &s.compressor.sustain},
+      {"comp_blend", &s.compressor.blend},
+      {"comp_level", &s.compressor.levelDb},
+      {"fuzz_fuzz", &s.fuzz.fuzz},
+      {"fuzz_tone", &s.fuzz.tone},
+      {"fuzz_level", &s.fuzz.levelDb},
+      {"od_drive", &s.overdrive.drive},
+      {"od_tone", &s.overdrive.tone},
+      {"od_level", &s.overdrive.levelDb},
+      {"dist_distortion", &s.distortion.distortion},
+      {"dist_tone", &s.distortion.tone},
+      {"dist_level", &s.distortion.levelDb},
+      {"boost_gain", &s.boost.gainDb},
+      {"boost_bass", &s.boost.bassDb},
+      {"boost_treble", &s.boost.trebleDb},
+      {"eq_50", &s.eqDb[0]},
+      {"eq_100", &s.eqDb[1]},
+      {"eq_200", &s.eqDb[2]},
+      {"eq_400", &s.eqDb[3]},
+      {"eq_800", &s.eqDb[4]},
+      {"eq_1k6", &s.eqDb[5]},
+      {"eq_3k2", &s.eqDb[6]},
+      {"eq_6k4", &s.eqDb[7]},
+      {"eq_12k8", &s.eqDb[8]},
+  };
+  for (const auto &item :
+       juce::StringArray::fromTokens(o.get("--set"), ",", "")) {
+    const auto id = item.upToFirstOccurrenceOf("=", false, false);
+    const auto knob = knobs.find(id);
+    if (knob == knobs.end() || !item.contains("="))
+      fail("--set: unknown knob " + item);
+    *knob->second = item.fromFirstOccurrenceOf("=", false, false).getFloatValue();
+  }
   return s;
 }
 
@@ -144,7 +180,8 @@ void setUp(SignalChain &chain, const Options &o, double sampleRate, int block,
   juce::String error;
   if (!chain.getCab().load(o.get("--ir", "builtin:EvilCab4x12"), error))
     fail(error);
-  if (!chain.getModels().loadSynchronously(
+  if (!o.has("--no-model") &&
+      !chain.getModels().loadSynchronously(
           o.get("--model", "builtin:BlackstarHT1"), error))
     fail(error);
 

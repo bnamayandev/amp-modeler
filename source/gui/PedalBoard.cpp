@@ -25,17 +25,19 @@ const std::array<Pedal::Spec, 12> &pedalSpecs() {
       {"fuzz", p::fuzzOn,
        {{{p::fuzzAmount, "Fuzz"}, {p::fuzzTone, "Tone"},
          {p::fuzzLevel, "Level"}}},
-       "Hard-clipping fuzz with a scooped tone control: dark and wooly to "
-       "the left, cutting to the right."},
+       "Big Muff style: two clipping stages into a tone control that scoops "
+       "the mids at noon, dark and wooly to the left, cutting to the right."},
       {"overdrive", p::odOn,
        {{{p::odDrive, "Drive"}, {p::odTone, "Tone"}, {p::odLevel, "Level"}}},
-       "Mid-hump overdrive. Low drive and high level tightens a high-gain "
-       "amp; more drive is a lead tone on its own."},
+       "Tube Screamer style: thins the lows and pushes the mids. Low drive "
+       "and high level tightens a dirty amp; on a clean amp it's a crunch "
+       "tone of its own."},
       {"distortion", p::distOn,
        {{{p::distAmount, "Dist"}, {p::distTone, "Tone"},
          {p::distLevel, "Level"}}},
-       "Op-amp distortion in the style of the RAT: tighter and more "
-       "saturated than the overdrive, with a filter from muffled to raw."},
+       "RAT style: nearly clean with Dist down, heavy from noon up, and "
+       "smoother as it goes. Tone runs from muffled to raw, and opens up "
+       "above noon."},
       {"boost", p::boostOn,
        {{{p::boostGain, "Boost"}, {p::boostBass, "Bass"},
          {p::boostTreble, "Treble"}}},

@@ -9,30 +9,6 @@ float coeffForTime(double sampleRate, double seconds) {
   return (float)(1.0 - std::exp(-1.0 / (seconds * sampleRate)));
 }
 
-/** First-order antiderivative anti-aliasing (Parker et al., DAFx 2016): the
-   waveshaper's output is the mean of f over the segment between consecutive
-   inputs, F(x1)-F(x0) / (x1-x0), which suppresses most aliasing without
-   oversampling. Costs half a sample of delay. */
-template <typename F, typename Fn>
-float antiderivativeShape(float x, float &previous, float &previousF,
-                          F antiderivative, Fn shape) noexcept {
-  const double fx = antiderivative((double)x);
-  const double diff = (double)x - previous;
-  const float y = std::abs(diff) > 1.0e-4
-                      ? (float)((fx - previousF) / diff)
-                      : shape(0.5f * (x + previous));
-  previous = x;
-  previousF = (float)fx;
-  return y;
-}
-
-/** Hard clipper at +/-1 and its antiderivative, for antiderivativeShape. */
-constexpr auto hardClip = [](float v) { return std::clamp(v, -1.0f, 1.0f); };
-constexpr auto hardClipAntiderivative = [](double v) {
-  const double a = std::abs(v);
-  return a <= 1.0 ? 0.5 * v * v : a - 0.5;
-};
-
 /** Advances an LFO phase in [0, 1) by one sample and returns its sine. */
 float stepSine(double &phase, float rateHz, double sampleRate) noexcept {
   phase += rateHz / sampleRate;
@@ -40,17 +16,28 @@ float stepSine(double &phase, float rateHz, double sampleRate) noexcept {
   return (float)std::sin(2.0 * std::numbers::pi * phase);
 }
 
-/** Steps a smoothed tone value and refilters every 16 samples while it moves.
- */
+/** Steps a smoothed knob and calls apply(value) every 16 samples while it moves,
+   and at the top of each block. */
+template <typename Smoothed, typename Apply>
+void updateKnob(Smoothed &knob, int i, int n, Apply apply) noexcept {
+  if ((i & 15) != 0)
+    return;
+  if (knob.isSmoothing() || i == 0)
+    apply(knob.isSmoothing() ? knob.skip(std::min(16, n - i))
+                             : knob.getTargetValue());
+}
+
+/** updateKnob for a knob that sets one filter's coefficients. */
 template <typename Smoothed, typename Make>
 void updateToneFilter(Smoothed &tone, Biquad &filter, int i, int n,
                       Make make) noexcept {
-  if ((i & 15) != 0)
-    return;
-  if (tone.isSmoothing() || i == 0)
-    filter.setCoeffs(make(tone.isSmoothing() ? tone.skip(std::min(16, n - i))
-                                             : tone.getTargetValue()));
+  updateKnob(tone, i, n, [&](float value) { filter.setCoeffs(make(value)); });
 }
+
+using analog::audioTaper;
+using analog::cornerHz;
+using analog::railVolts;
+using analog::voltsAtFullScale;
 } // namespace
 
 // --- Wah --------------------------------------------------------------------
@@ -178,174 +165,245 @@ void CompressorPedal::process(float *data, int n, const Settings &s) noexcept {
 
 // --- Fuzz -------------------------------------------------------------------
 
-void FuzzPedal::prepare(double newSampleRate) {
-  sampleRate = newSampleRate;
-  inputHighPass.setCoeffs(BiquadCoeffs::onePoleHighPass(sampleRate, 120.0));
-  inputLowPass.setCoeffs(BiquadCoeffs::onePoleLowPass(sampleRate, 4500.0));
-  dcBlocker.setCoeffs(BiquadCoeffs::onePoleHighPass(sampleRate, 20.0));
-  toneLow.setCoeffs(BiquadCoeffs::onePoleLowPass(sampleRate, 500.0));
-  toneHigh.setCoeffs(BiquadCoeffs::onePoleHighPass(sampleRate, 1100.0));
-  gain.reset(sampleRate, 0.03);
+void FuzzPedal::prepare(double sampleRate) {
+  oversampler.prepare(sampleRate);
+  rate = sampleRate * oversampler.getFactor();
+  // Each stage's 470 pF across its 470k feedback resistor.
+  const auto feedback = BiquadCoeffs::onePoleLowPass(rate, cornerHz(470.0e3, 470.0e-12));
+  inputLowPass.setCoeffs(feedback);
+  feedback2.setCoeffs(feedback);
+  feedback3.setCoeffs(feedback);
+  // 1 uF into each stage's 10k input resistor.
+  const auto coupled = BiquadCoeffs::onePoleHighPass(rate, cornerHz(10.0e3, 1.0e-6));
+  coupling2.setCoeffs(coupled);
+  coupling3.setCoeffs(coupled);
   level.reset(sampleRate, 0.05);
+  fuzz.reset(sampleRate, 0.03);
   tone.reset(sampleRate, 0.03);
   reset();
 }
 
 void FuzzPedal::reset() noexcept {
-  for (auto *f :
-       {&inputHighPass, &inputLowPass, &dcBlocker, &toneLow, &toneHigh})
+  oversampler.reset();
+  stage2.reset();
+  stage3.reset();
+  for (auto *f : {&inputLowPass, &feedback2, &feedback3, &coupling2, &coupling3,
+                  &toneStack})
     f->reset();
-  previous = previousAntiderivative = 0.0f;
   primed = false;
 }
 
 void FuzzPedal::process(float *data, int n, const Settings &s) noexcept {
-  constexpr float bias = 0.3f; // asymmetric clipping: even harmonics
-  constexpr float outputScale = 0.3f;
-  const auto gainTarget = juce::Decibels::decibelsToGain(12.0f + 42.0f * s.fuzz);
+  constexpr double feedbackOhms = 470.0e3;
+  constexpr double inputGain = feedbackOhms / 39.0e3; // first stage, no diodes
+  constexpr double stage3Gain = feedbackOhms / 10.0e3;
+  constexpr double recoveryGain = 10.0e3 / 2.2e3; // the output transistor
+  constexpr double outputScale = 0.5;             // about unity at the defaults
+
   const auto levelTarget = juce::Decibels::decibelsToGain(s.levelDb);
   if (!primed) {
-    gain.setCurrentAndTargetValue(gainTarget);
     level.setCurrentAndTargetValue(levelTarget);
+    fuzz.setCurrentAndTargetValue(s.fuzz);
     tone.setCurrentAndTargetValue(s.tone);
     primed = true;
   }
-  gain.setTargetValue(gainTarget);
   level.setTargetValue(levelTarget);
+  fuzz.setTargetValue(s.fuzz);
   tone.setTargetValue(s.tone);
 
-  for (int i = 0; i < n; ++i) {
-    const float v =
-        inputLowPass.processSample(inputHighPass.processSample(data[i])) *
-            gain.getNextValue() +
-        bias;
-    float y = antiderivativeShape(v, previous, previousAntiderivative,
-                                  hardClipAntiderivative, hardClip);
-    y = dcBlocker.processSample(y);
+  const auto setSustain = [this](float knob) {
+    // A 100k pot from the first stage to the second: its wiper's resistance adds
+    // to the second stage's 10k input resistor, lowering that stage's gain. A real
+    // pot never quite reaches zero, so the knob's bottom isn't silence.
+    sustainGain = 0.01 + 0.99 * audioTaper(knob);
+    stage2Gain = feedbackOhms / (10.0e3 + 100.0e3 * sustainGain * (1.0 - sustainGain));
+  };
+  const auto toneCoeffs = [this](float t) {
+    // Nodal analysis of the tone stack: 39k and 10 nF to one end of a 100k pot,
+    // 3.9 nF and 22k to the other, the wiper unloaded.
+    constexpr double gLow = 1.0 / 39.0e3, gHigh = 1.0 / 22.0e3, gPot = 1.0 / 100.0e3;
+    constexpr double cLow = 10.0e-9, cHigh = 3.9e-9;
+    const double k = t;
+    return BiquadCoeffs::fromAnalog(
+        rate, (1.0 - k) * gLow * (gHigh + gPot) + k * gPot * gLow,
+        cHigh * (gLow + gPot), k * cLow * cHigh,
+        (gLow + gPot) * (gHigh + gPot) - gPot * gPot,
+        cLow * (gHigh + gPot) + cHigh * (gLow + gPot), cLow * cHigh);
+  };
 
-    // Big-muff style tone: crossfade a low-pass and a high-pass, which leaves
-    // the mids scooped in the middle of the knob.
-    const float t = tone.getNextValue();
-    const float lows = toneLow.processSample(y), highs = toneHigh.processSample(y);
-    data[i] = (lows + t * (highs - lows)) * outputScale * level.getNextValue();
+  const int factor = oversampler.getFactor();
+  std::array<double, analog::Oversampler::maxFactor> buffer;
+  for (int i = 0; i < n; ++i) {
+    updateKnob(fuzz, i, n, setSustain);
+    updateToneFilter(tone, toneStack, i, n, toneCoeffs);
+
+    oversampler.up((double)data[i] * voltsAtFullScale, buffer.data());
+    for (int k = 0; k < factor; ++k) {
+      const double first = std::clamp(
+          inputLowPass.processSample(buffer[(size_t)k]) * inputGain, -railVolts,
+          railVolts);
+      const double second = stage2.process(
+          feedback2.processSample(coupling2.processSample(first * sustainGain)) *
+              stage2Gain,
+          feedbackOhms);
+      const double third = stage3.process(
+          feedback3.processSample(coupling3.processSample(second)) * stage3Gain,
+          feedbackOhms);
+      buffer[(size_t)k] = toneStack.processSample(third);
+    }
+    data[i] = (float)(oversampler.down(buffer.data()) * recoveryGain * outputScale /
+                      voltsAtFullScale) *
+              level.getNextValue();
   }
 }
 
 // --- Overdrive --------------------------------------------------------------
 
-void OverdrivePedal::prepare(double newSampleRate) {
-  sampleRate = newSampleRate;
-  clipHighPass.setCoeffs(BiquadCoeffs::onePoleHighPass(sampleRate, 720.0));
-  clipLowPass.setCoeffs(BiquadCoeffs::onePoleLowPass(sampleRate, 5600.0));
-  gain.reset(sampleRate, 0.03);
+void OverdrivePedal::prepare(double sampleRate) {
+  oversampler.prepare(sampleRate);
+  rate = sampleRate * oversampler.getFactor();
+  // 47 nF and 4.7k to ground set which frequencies the op-amp amplifies.
+  clipHighPass.setCoeffs(BiquadCoeffs::onePoleHighPass(rate, cornerHz(4.7e3, 47.0e-9)));
+  coupling.setCoeffs(BiquadCoeffs::onePoleHighPass(rate, 33.0));
   level.reset(sampleRate, 0.05);
+  drive.reset(sampleRate, 0.03);
   tone.reset(sampleRate, 0.03);
   reset();
 }
 
 void OverdrivePedal::reset() noexcept {
-  for (auto *f : {&clipHighPass, &clipLowPass, &toneLowPass})
+  oversampler.reset();
+  clipper.reset();
+  for (auto *f : {&coupling, &clipHighPass, &clipLowPass, &toneFilter})
     f->reset();
-  previous = previousAntiderivative = 0.0f;
   primed = false;
 }
 
 void OverdrivePedal::process(float *data, int n, const Settings &s) noexcept {
-  constexpr float clipLevel = 0.5f;   // diode ceiling relative to the dry path
-  constexpr float outputScale = 0.6f; // about unity at the default drive
-  const auto gainTarget = juce::Decibels::decibelsToGain(6.0f + 36.0f * s.drive);
+  constexpr double groundLegOhms = 4.7e3;
+  constexpr double outputScale = 0.6; // about unity on a guitar at the defaults
+
   const auto levelTarget = juce::Decibels::decibelsToGain(s.levelDb);
   if (!primed) {
-    gain.setCurrentAndTargetValue(gainTarget);
     level.setCurrentAndTargetValue(levelTarget);
+    drive.setCurrentAndTargetValue(s.drive);
     tone.setCurrentAndTargetValue(s.tone);
     primed = true;
   }
-  gain.setTargetValue(gainTarget);
   level.setTargetValue(levelTarget);
+  drive.setTargetValue(s.drive);
   tone.setTargetValue(s.tone);
 
-  const auto tanhShape = [](float v) { return std::tanh(v); };
-  const auto logCosh = [](double v) { // antiderivative of tanh, overflow-safe
-    const double a = std::abs(v);
-    return a + std::log1p(std::exp(-2.0 * a)) - std::numbers::ln2;
+  const auto setDrive = [this](float knob) {
+    feedbackOhms = 51.0e3 + 500.0e3 * audioTaper(knob);
+    clipLowPass.setCoeffs( // 51 pF across the feedback resistor
+        BiquadCoeffs::onePoleLowPass(rate, cornerHz(feedbackOhms, 51.0e-12)));
   };
-  const auto toneCoeffs = [this](float t) {
-    return BiquadCoeffs::onePoleLowPass(sampleRate,
-                                        700.0 * std::pow(2.0, 3.5 * t));
+  const auto toneCoeffs = [this](float knob) {
+    // Nodal analysis of the tone section. 1k and 220 nF (723 Hz) feed the
+    // op-amp's + input. A 20k pot runs from there to its - input, with 220R and
+    // 220 nF (3.3 kHz) from the wiper to ground, and 1k of feedback.
+    constexpr double r1 = 1.0e3, c1 = 220.0e-9, rs = 220.0, c2 = 220.0e-9,
+                     rf = 1.0e3, pot = 20.0e3;
+    // The knob law is an S rather than a linear pot's straight line: fitted to
+    // captures of a real one with its Tone at 5 and at 8.
+    const double x = knob;
+    const double k = x * x * x * (x * (6.0 * x - 15.0) + 10.0);
+    const double parallel = pot * k * (1.0 - k); // both sides of the wiper
+    const double t1 = c1 * r1, t2 = c2 * (rs + parallel);
+    return BiquadCoeffs::fromAnalog(rate, 1.0, c2 * (rs + parallel + rf * k), 0.0,
+                                    1.0, t1 + t2 + r1 * c2 * (1.0 - k), t1 * t2);
   };
 
+  const int factor = oversampler.getFactor();
+  std::array<double, analog::Oversampler::maxFactor> buffer;
   for (int i = 0; i < n; ++i) {
-    updateToneFilter(tone, toneLowPass, i, n, toneCoeffs);
-    const float x = data[i];
-    const float v = clipLowPass.processSample(clipHighPass.processSample(x)) *
-                    gain.getNextValue();
-    const float clipped = antiderivativeShape(v, previous, previousAntiderivative,
-                                              logCosh, tanhShape);
-    const float y = toneLowPass.processSample(x + clipLevel * clipped);
-    data[i] = y * outputScale * level.getNextValue();
+    updateKnob(drive, i, n, setDrive);
+    updateToneFilter(tone, toneFilter, i, n, toneCoeffs);
+
+    oversampler.up((double)data[i] * voltsAtFullScale, buffer.data());
+    for (int k = 0; k < factor; ++k) {
+      const double in = coupling.processSample(buffer[(size_t)k]);
+      // The op-amp makes the voltage across its feedback path whatever passes
+      // the current through its ground leg: unity plus that.
+      const double overDiodes = clipper.process(
+          clipLowPass.processSample(clipHighPass.processSample(in) * feedbackOhms /
+                                    groundLegOhms),
+          feedbackOhms);
+      buffer[(size_t)k] = toneFilter.processSample(
+          std::clamp(in + overDiodes, -railVolts, railVolts));
+    }
+    data[i] = (float)(oversampler.down(buffer.data()) * outputScale / voltsAtFullScale) *
+              level.getNextValue();
   }
 }
 
 // --- Distortion -------------------------------------------------------------
 
-void DistortionPedal::prepare(double newSampleRate) {
-  sampleRate = newSampleRate;
-  inputHighPass.setCoeffs(BiquadCoeffs::onePoleHighPass(sampleRate, 60.0));
-  trebleHighPass.setCoeffs(BiquadCoeffs::onePoleHighPass(sampleRate, 1500.0));
-  gain.reset(sampleRate, 0.03);
+void DistortionPedal::prepare(double sampleRate) {
+  oversampler.prepare(sampleRate);
+  rate = sampleRate * oversampler.getFactor();
   level.reset(sampleRate, 0.05);
-  bandwidth.reset(sampleRate, 0.03);
+  distortion.reset(sampleRate, 0.03);
   tone.reset(sampleRate, 0.03);
   reset();
 }
 
 void DistortionPedal::reset() noexcept {
-  for (auto *f : {&inputHighPass, &trebleHighPass, &opAmpLowPass, &toneLowPass})
-    f->reset();
-  previous = previousAntiderivative = 0.0f;
+  oversampler.reset();
+  gainStage.reset();
+  clipper.reset();
+  toneLowPass.reset();
   primed = false;
 }
 
 void DistortionPedal::process(float *data, int n, const Settings &s) noexcept {
-  constexpr float trebleLift = 2.0f; // the op-amp's second feedback leg
-  constexpr float outputScale = 0.2f; // about unity at the default setting
-  const auto gainDb = [](float d) { return 12.0f + 40.0f * d; };
-  const auto gainTarget = juce::Decibels::decibelsToGain(gainDb(s.distortion));
+  constexpr double seriesOhms = 1.0e3; // from the op-amp to the diodes
+  constexpr double outputScale = 0.6;  // about unity at the defaults
+
   const auto levelTarget = juce::Decibels::decibelsToGain(s.levelDb);
   if (!primed) {
-    gain.setCurrentAndTargetValue(gainTarget);
     level.setCurrentAndTargetValue(levelTarget);
-    bandwidth.setCurrentAndTargetValue(s.distortion);
+    distortion.setCurrentAndTargetValue(s.distortion);
     tone.setCurrentAndTargetValue(s.tone);
     primed = true;
   }
-  gain.setTargetValue(gainTarget);
   level.setTargetValue(levelTarget);
-  bandwidth.setTargetValue(s.distortion);
+  distortion.setTargetValue(s.distortion);
   tone.setTargetValue(s.tone);
 
-  const auto opAmpCoeffs = [this, gainDb](float d) {
-    // Gain-bandwidth limit: past moderate settings, more gain is less treble.
-    const double cutoff =
-        8.0e5 / juce::Decibels::decibelsToGain((double)gainDb(d));
-    return BiquadCoeffs::onePoleLowPass(sampleRate,
-                                        std::clamp(cutoff, 2000.0, 16000.0));
+  const auto setDistortion = [this](float knob) {
+    // Feedback R over two legs to ground: 560R + 4.7 uF (60 Hz) and 47R + 2.2 uF
+    // (1.5 kHz). N(s) = 1 + R * Y(s) is the gain an ideal op-amp would give. An
+    // LM308 with its 30 pF manages 30 dB at 10 kHz, so it has a gain-bandwidth
+    // of 316 kHz, and the closed loop is N / (1 + s N / wt).
+    constexpr double c1 = 4.7e-6, c2 = 2.2e-6, t1 = 560.0 * c1, t2 = 47.0 * c2;
+    constexpr double inverseWt = 1.0 / (2.0 * juce::MathConstants<double>::pi * 316.0e3);
+    const double r = 100.0e3 * audioTaper(knob);
+    const double p1 = t1 + t2 + r * (c1 + c2);
+    const double p2 = t1 * t2 + r * (c1 * t2 + c2 * t1);
+    gainStage.setAnalog(rate, 1.0, p1, p2, 1.0, t1 + t2 + inverseWt,
+                        t1 * t2 + p1 * inverseWt, p2 * inverseWt);
   };
   const auto toneCoeffs = [this](float t) {
-    return BiquadCoeffs::onePoleLowPass(sampleRate,
-                                        500.0 * std::pow(2.0, 4.6 * t));
+    // 1.5k and the 100k Filter pot into 3.3 nF: 32 kHz down to 475 Hz. The real
+    // knob darkens clockwise; here 0 is dark.
+    return BiquadCoeffs::onePoleLowPass(
+        rate, cornerHz(1.5e3 + 100.0e3 * audioTaper(1.0 - t), 3.3e-9));
   };
 
+  const int factor = oversampler.getFactor();
+  std::array<double, analog::Oversampler::maxFactor> buffer;
   for (int i = 0; i < n; ++i) {
-    updateToneFilter(bandwidth, opAmpLowPass, i, n, opAmpCoeffs);
+    updateKnob(distortion, i, n, setDistortion);
     updateToneFilter(tone, toneLowPass, i, n, toneCoeffs);
-    const float x = inputHighPass.processSample(data[i]);
-    const float lifted = x + trebleLift * trebleHighPass.processSample(x);
-    const float v = opAmpLowPass.processSample(lifted * gain.getNextValue());
-    const float clipped = antiderivativeShape(v, previous, previousAntiderivative,
-                                              hardClipAntiderivative, hardClip);
-    data[i] = toneLowPass.processSample(clipped) * outputScale *
+
+    oversampler.up((double)data[i] * voltsAtFullScale, buffer.data());
+    for (int k = 0; k < factor; ++k) {
+      buffer[(size_t)k] = toneLowPass.processSample(clipper.process(
+          gainStage.process(buffer[(size_t)k]), seriesOhms, railVolts));
+    }
+    data[i] = (float)(oversampler.down(buffer.data()) * outputScale / voltsAtFullScale) *
               level.getNextValue();
   }
 }

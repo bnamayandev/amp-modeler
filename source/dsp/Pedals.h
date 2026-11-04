@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AnalogStages.h"
 #include "Biquad.h"
 #include "DelayLine.h"
 
@@ -113,14 +114,15 @@ private:
   bool primed = false, envelopePrimed = false;
 };
 
-/** Fuzz: lots of gain into an asymmetric hard clipper (first-order
-   antiderivative anti-aliasing), then a scooped tone stack that sweeps from a
-   low-pass to a high-pass. */
+/** Fuzz modelled on the Big Muff Pi circuit: a gain stage, the Sustain pot, two
+   cascaded clipping stages with diodes and 470 pF in their feedback (which is
+   what keeps it smooth), then the passive tone stack that crossfades a 408 Hz
+   low-pass with a 1.86 kHz high-pass and scoops the mids at noon. */
 class FuzzPedal {
 public:
   struct Settings {
     bool on = false;
-    float fuzz = 0.7f; // 0..1
+    float fuzz = 0.7f; // the Sustain knob, 0..1
     float tone = 0.5f; // 0 dark .. 1 bright
     float levelDb = 0.0f;
   };
@@ -130,18 +132,22 @@ public:
   void process(float *data, int n, const Settings &s) noexcept;
 
 private:
-  double sampleRate = 48000.0;
-  Biquad inputHighPass, inputLowPass, dcBlocker, toneLow, toneHigh;
-  float previous = 0.0f, previousAntiderivative = 0.0f;
-  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain,
-      level;
-  juce::SmoothedValue<float> tone;
+  double rate = 48000.0; // the oversampled rate
+  analog::Oversampler oversampler;
+  analog::DiodeClipper stage2, stage3;
+  Biquad inputLowPass, feedback2, feedback3, coupling2, coupling3, toneStack;
+  double sustainGain = 0.0, stage2Gain = 47.0;
+  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> level;
+  juce::SmoothedValue<float> fuzz, tone;
   bool primed = false;
 };
 
-/** Mid-hump overdrive in the style of the classic green screamer: only the
-   high-passed signal is driven into a soft clipper (antiderivative
-   anti-aliased) and the clean lows are added back, then a treble cut. */
+/** Overdrive modelled on the Tube Screamer circuit: the op-amp amplifies only
+   what's above 720 Hz, by 12 to 118 times, into diodes in its feedback loop, and
+   the clean signal rides on top at unity. So low frequencies stay clean and
+   relatively quiet, which is where its mid hump comes from. Then the tone
+   section's 723 Hz low-pass and active treble control. Drive and Tone follow the
+   real pots, so all of this holds at the real knob positions. */
 class OverdrivePedal {
 public:
   struct Settings {
@@ -156,25 +162,27 @@ public:
   void process(float *data, int n, const Settings &s) noexcept;
 
 private:
-  double sampleRate = 48000.0;
-  Biquad clipHighPass, clipLowPass, toneLowPass;
-  float previous = 0.0f, previousAntiderivative = 0.0f;
-  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain,
-      level;
-  juce::SmoothedValue<float> tone;
+  double rate = 48000.0; // the oversampled rate
+  analog::Oversampler oversampler;
+  analog::DiodeClipper clipper;
+  Biquad coupling, clipHighPass, clipLowPass, toneFilter;
+  double feedbackOhms = 51.0e3;
+  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> level;
+  juce::SmoothedValue<float> drive, tone;
   bool primed = false;
 };
 
-/** Distortion in the style of the RAT: an op-amp gain stage with a treble
-   lift whose bandwidth narrows as the gain goes up (so more distortion is also
-   smoother), symmetric hard clipping (antiderivative anti-aliased), then a
-   low-pass filter that sweeps from muffled to raw. */
+/** Distortion modelled on the ProCo RAT circuit: an LM308 whose gain runs from
+   unity to 180 times, and 13 times more above 1.5 kHz, as far as the slow op-amp
+   can deliver it (only 30 dB at 10 kHz, which is why more distortion is also
+   smoother). Then silicon diodes to ground and the Filter pot's low-pass, from
+   475 Hz to 32 kHz. With the Distortion knob down it is nearly clean. */
 class DistortionPedal {
 public:
   struct Settings {
     bool on = false;
     float distortion = 0.6f; // 0..1
-    float tone = 0.5f;       // 0 dark .. 1 bright
+    float tone = 0.5f;       // 0 dark .. 1 bright (the real Filter knob reversed)
     float levelDb = 0.0f;
   };
 
@@ -183,12 +191,13 @@ public:
   void process(float *data, int n, const Settings &s) noexcept;
 
 private:
-  double sampleRate = 48000.0;
-  Biquad inputHighPass, trebleHighPass, opAmpLowPass, toneLowPass;
-  float previous = 0.0f, previousAntiderivative = 0.0f;
-  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> gain,
-      level;
-  juce::SmoothedValue<float> bandwidth, tone; // bandwidth follows distortion
+  double rate = 48000.0; // the oversampled rate
+  analog::Oversampler oversampler;
+  analog::ThirdOrderFilter gainStage;
+  analog::DiodeClipper clipper;
+  Biquad toneLowPass;
+  juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> level;
+  juce::SmoothedValue<float> distortion, tone;
   bool primed = false;
 };
 

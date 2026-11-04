@@ -72,8 +72,9 @@ plugin where your DAW looks:
     official trainer, or `training/`). Loading happens off the audio thread and the switch
     crossfades over 40 ms. The panel shows the model's held-out ESR if its metadata has it.
   - **Unload** plays with no model: the amp passes clean.
-- **Cabinet**: built-in synthetic 4x12, or **Load IR...** (WAV/AIFF/FLAC, any rate, mono or
-  first channel of stereo, up to 2 s). IRs are energy-normalised and swap without clicks.
+- **Cabinet**: built-in synthetic 4x12, shaped after real SM57 IRs, or **Load IR...** (WAV/AIFF/FLAC,
+  any rate, mono or first channel of stereo, up to 2 s). A real IR will always be better than the
+  built-in one. IRs are energy-normalised and swap without clicks.
   Turn it off for models that already include a cab (mic'd captures).
 - **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz, ±10 dB each.
   The faders have a parabolic taper, fine around 0 dB, over a live spectrum of
@@ -89,17 +90,27 @@ plugin where your DAW looks:
     your host), Auto (an envelope follower opens the filter as you pick harder, up to a full
     envelope filter), Peak (resonance).
   - *Compressor*: Sustain (threshold and ratio together), Blend (parallel compression),
-    Level. *Fuzz*: hard clipper with a scooped tone sweep. *Overdrive*: mid-hump screamer
-    style; low drive and high level tightens the neural amp. *Distortion*: RAT-style op-amp
-    clipper whose bandwidth narrows as the gain goes up, with a low-pass tone filter.
-    *Boost*: clean gain (0 to +20 dB) with bass and treble shelves.
+    Level. *Boost*: clean gain (0 to +20 dB) with bass and treble shelves.
+  - *Overdrive*, *Distortion* and *Fuzz* are circuit models of the Tube Screamer, ProCo RAT and
+    Big Muff Pi, with those pedals' component values and pot tapers (see
+    [drive pedals](#drive-pedals)), so they behave like them at the same knob positions. Level
+    is in dB: 0 is about unity on a guitar at the default settings.
+    - *Overdrive*: thins the lows and pushes the mids, even with Drive at 0. Low drive and high
+      level tightens a dirty amp; on a clean amp it's a crunch tone of its own. Noon on the real
+      pedal's Level knob is about -4 dB here, and full up about +4 dB.
+    - *Distortion*: nearly clean with Dist down, heavy from noon up, and smoother as it goes.
+      Tone is the RAT's Filter knob reversed, 475 Hz at 0 to fully open at 10, and it
+      opens up above noon.
+    - *Fuzz*: the knob is the Muff's Sustain. Tone scoops the mids at noon, dark and wooly below,
+      cutting above.
   - *Phaser*: four-stage, with feedback. *Flanger*: 0.7 to 7 ms sweep with feedback.
     *Chorus*: Rate, Depth, Mix. *Tremolo*: Rate, Depth and Shape (sine to square).
     *Delay*: 20 ms to 2 s; turning Time glides like a tape echo and repeats get darker.
     *Reverb*: Dattorro plate. Delay and reverb add their wet signal on top of an unchanged
     dry signal.
-  - All twelve pedals and the transposer together add ~1.5% of the block deadline
-    (`evil-cli bench --pedals all --transpose -2`).
+  - All twelve pedals and the transposer together add ~7% of the block deadline
+    (`evil-cli bench --pedals all --transpose -2`), most of it the three drive pedals: about
+    1.6% for the overdrive, 0.8% for the distortion and 3% for the fuzz.
 - **Tuner** (the *tuner* tab): pick a built-in tuning, or set any string to any note. String 1
   is the thinnest. Picking a note name takes the octave closest to that string's usual pitch,
   so string 1 to D is D4 and string 4 to Gb is Gb3; **-** and **+** move it an octave.
@@ -159,13 +170,14 @@ It also smoke-tests the training pipeline end to end.
 ## Test and measure
 
 ```bash
-build/tests/evil_tests_artefacts/Release/evil_tests          # 50 test cases
+build/tests/evil_tests_artefacts/Release/evil_tests          # 63 test cases
 pluginval --strictness-level 10 --validate-in-process "build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3"
 
 cli=build/evil-cli_artefacts/Release/evil-cli
 $cli bench --seconds 60 --block 128 --rate 48000              # CPU per block vs deadline (--csv for every block)
 $cli esr test-in.wav test-target.wav --model my.nam            # held-out ESR through the plugin's C++ path
 $cli render guitar.wav out.wav --model my.nam --ir cab.wav     # offline render, latency compensated
+$cli render guitar.wav out.wav --no-model --no-cab --pedals od --set od_drive=0.3,od_tone=0.6  # any knob, by id
 $cli info my.nam
 build/evil-snapshot_artefacts/Release/evil-snapshot shots/     # render the GUI to PNG, no window needed
 ```
@@ -183,6 +195,8 @@ The tests cover:
   exactly the reported latency at 44.1/48/96 kHz.
 - **DSP**: bit-exact pass-through with everything neutral, gate hysteresis and hold, EQ band
   gains, IR swaps without discontinuities.
+- **Drive pedals**: the overdrive against real Tube Screamer measurements, the distortion and
+  fuzz against their circuits' published values, aliasing, and the same sound at any sample rate.
 - **Tuner**: pitch within a cent from E1 to E6 at 44.1 to 192 kHz, plucked strings without
   octave errors even with a weak fundamental, silence on hum and noise; note and tuning
   parsing, picking the octave, and saved tunings surviving a reload or a damaged file.
@@ -242,6 +256,33 @@ resonance down 9%. When the host rate differs, the model runs inside a pair of b
 streaming resamplers (Kaiser-windowed sinc, exact rational phase, cutoff below the lower
 Nyquist). A FIFO of computed size guarantees exactly one output sample per input sample.
 
+### Drive pedals
+
+The overdrive, distortion and fuzz run in volts, with the circuits' component values. Digital full
+scale is +12 dBu peak (4.37 V), a common level for reamping NAM captures, so a pedal hits a NAM
+amp about as hard as the real one would (if your interface is calibrated like that; **Input** trims
+the difference). Each clips with the real 1N4148 diode equation, solved per sample, and pots follow
+audio tapers. Clipping this hard makes a near-square wave, so all of it runs at 4x (less at higher
+host rates) with first-order antiderivative anti-aliasing on top. The filters barely delay the
+signal, about 5 samples, and that isn't reported to the host.
+
+| | Tube Screamer | ProCo RAT | Big Muff Pi |
+|---|---|---|---|
+| Gain | 12 to 118x above 720 Hz, unity below (51k + 500k A over 4.7k + 47 nF) | Unity to 260x at 100 Hz, set by 100k A over 560R + 4.7 uF and 47R + 2.2 uF, limited by the LM308's 316 kHz gain-bandwidth | 12x, Sustain pot, then two stages of up to 47x with 470k and 470 pF |
+| Clipping | Diodes in the op-amp's feedback, the clean signal on top | Diodes to ground behind 1k | Diodes in both stages' feedback |
+| Tone | 723 Hz low-pass and the 20k active treble control, from nodal analysis | 1.5k + 100k A into 3.3 nF: 32 kHz to 475 Hz | 39k + 10 nF and 22k + 3.9 nF through a 100k pot |
+
+The overdrive is checked against [public NAM captures](https://github.com/pelennor2170/NAM_models)
+of a real Ibanez Tube Screamer Mini, a close relative of the classic circuit
+(`tests/TestPedals.cpp` holds the measured numbers, not the captures). With its knobs at 5/5/5 it tracks the real pedal within 2 dB from 100 Hz to 8 kHz on a
+real guitar DI through a real amp and cab, and its 1 kHz saturation curve fits within 1 dB from
+0.003 to full scale. The S-shaped Tone law and the 3 V rail are fitted to those captures, and
+the knob positions in their names are approximate.
+
+**The distortion and fuzz are from their circuits alone**: no captures of a RAT or Muff were
+available to check them against. The op-amp's slew limit and the transistors' own soft clipping
+aren't modelled.
+
 **Deviations from the brief, and why:**
 
 1. *No gray-box overdrive and no oversampling.* The amp is the NAM model alone, so nothing
@@ -262,7 +303,7 @@ Nyquist). A FIFO of computed size guarantees exactly one output sample per input
 
 ```
 source/dsp/        SignalChain, ModelManager, NamModelRunner, StreamingResampler, CabSim,
-                   Equaliser, NoiseGate, Biquad, Pedals, ReverbPedal, PitchShifter,
+                   Equaliser, NoiseGate, Biquad, Pedals, AnalogStages, ReverbPedal, PitchShifter,
                    PitchDetector, Metronome, DelayLine
 source/state/      parameters, presets, tunings
 source/gui/        look and feel, knobs, meters, pedal board, tuner page

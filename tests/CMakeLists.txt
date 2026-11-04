@@ -5,6 +5,7 @@ target_sources(evil_tests PRIVATE
     TestMain.cpp
     TestDsp.cpp
     TestPedals.cpp
+    TestOversampler.cpp
     TestResampler.cpp
     TestNam.cpp
     TestRealtime.cpp

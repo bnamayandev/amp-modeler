@@ -34,7 +34,7 @@
     <Param id="gate_threshold" value="-58"/>
     <Param id="fuzz_on" value="1"/>
     <Param id="fuzz_fuzz" value="0.75"/>
-    <Param id="fuzz_tone" value="0.45"/>
+    <Param id="fuzz_tone" value="0.65"/>
     <Param id="eq_400" value="0.5"/>
     <Param id="eq_800" value="2"/>
     <Param id="eq_1k6" value="0.5"/>

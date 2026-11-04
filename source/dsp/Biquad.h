@@ -67,6 +67,16 @@ struct BiquadCoeffs {
     return {1 / (1 + k), -1 / (1 + k), 0.0, (k - 1) / (1 + k), 0.0};
   }
 
+  /** Bilinear transform of (b0 + b1 s + b2 s^2) / (a0 + a1 s + a2 s^2), for a
+     transfer function worked out from a circuit's components. */
+  static BiquadCoeffs fromAnalog(double sampleRate, double b0, double b1,
+                                 double b2, double a0, double a1, double a2) {
+    const double k = 2.0 * sampleRate, k2 = k * k;
+    return normalise(b0 + b1 * k + b2 * k2, 2.0 * (b0 - b2 * k2),
+                     b0 - b1 * k + b2 * k2, a0 + a1 * k + a2 * k2,
+                     2.0 * (a0 - a2 * k2), a0 - a1 * k + a2 * k2);
+  }
+
   /** Magnitude response at `freq`, in dB. */
   double gainDbAt(double sampleRate, double freq) const {
     const auto z = std::polar(1.0, -2.0 * std::numbers::pi * freq / sampleRate);
@@ -103,11 +113,14 @@ public:
   void reset() noexcept { z1 = z2 = 0.0; }
 
   float processSample(float in) noexcept {
-    const double x = in;
+    return static_cast<float>(processSample(static_cast<double>(in)));
+  }
+
+  double processSample(double x) noexcept {
     const double y = coeffs.b0 * x + z1;
     z1 = coeffs.b1 * x - coeffs.a1 * y + z2;
     z2 = coeffs.b2 * x - coeffs.a2 * y;
-    return static_cast<float>(y);
+    return y;
   }
 
   void process(float *data, int numSamples) noexcept {

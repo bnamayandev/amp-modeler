@@ -8,6 +8,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 
+#include <juce_dsp/juce_dsp.h>
+
 using namespace evil;
 using namespace evil::test;
 
@@ -310,6 +312,316 @@ TEST_CASE("Drive pedals stay bounded and near unity level at their defaults",
       CHECK(std::abs(distGain) < 6.0);
     }
   }
+}
+
+namespace {
+/** Gain at one frequency once settled, in dB, at a given input level. */
+template <typename Pedal>
+double gainDb(const typename Pedal::Settings &settings, double freq,
+              float amplitude, double sampleRate = rate) {
+  Pedal pedal;
+  pedal.prepare(sampleRate);
+  auto x = sine(freq, sampleRate, (int)sampleRate, amplitude);
+  pedal.process(x.data(), (int)x.size(), settings);
+  const double w = 2.0 * juce::MathConstants<double>::pi * freq / sampleRate;
+  double re = 0.0, im = 0.0;
+  const size_t from = x.size() / 2;
+  // Whole cycles, so the tone's own harmonics don't count towards it.
+  const auto count = (size_t)(std::floor((double)(x.size() - from) * freq / sampleRate) *
+                              sampleRate / freq);
+  for (size_t i = from; i < from + count; ++i) {
+    re += x[i] * std::cos(w * (double)i);
+    im += x[i] * std::sin(w * (double)i);
+  }
+  return juce::Decibels::gainToDecibels(
+      2.0 * std::sqrt(re * re + im * im) / (double)count / amplitude, -200.0);
+}
+
+/** Inharmonic energy below 16 kHz relative to everything, in dB: aliasing, as
+   analog clipping has none. Whole cycles fit the FFT exactly, so nothing leaks. */
+template <typename Pedal>
+double inharmonicDb(const typename Pedal::Settings &settings, int cycles,
+                    float amplitude) {
+  constexpr int order = 16, size = 1 << order;
+  constexpr int settle = (int)rate / 2;
+  const double freq = cycles * rate / size;
+  Pedal pedal;
+  pedal.prepare(rate);
+  auto x = sine(freq, rate, settle + size, amplitude);
+  pedal.process(x.data(), (int)x.size(), settings);
+
+  std::vector<float> spectrum(2 * size, 0.0f);
+  std::copy(x.begin() + settle, x.end(), spectrum.begin());
+  juce::dsp::FFT(order).performFrequencyOnlyForwardTransform(spectrum.data());
+  double inharmonic = 0.0, total = 0.0;
+  for (int bin = 1; bin < size / 2; ++bin) {
+    const double power = (double)spectrum[(size_t)bin] * spectrum[(size_t)bin];
+    total += power;
+    if (bin % cycles != 0 && bin * rate / size < 16000.0)
+      inharmonic += power;
+  }
+  return 10.0 * std::log10(inharmonic / total + 1.0e-30);
+}
+
+/** Total harmonic distortion of a tone through the pedal, as a fraction. */
+template <typename Pedal>
+double thd(const typename Pedal::Settings &settings, double freq,
+           float amplitude) {
+  double harmonics = 0.0;
+  Pedal pedal;
+  pedal.prepare(rate);
+  auto x = sine(freq, rate, (int)rate, amplitude);
+  pedal.process(x.data(), (int)x.size(), settings);
+  const size_t from = x.size() / 2;
+  const auto count = (size_t)(std::floor((double)(x.size() - from) * freq / rate) * rate / freq);
+  for (int h = 2; h * freq < 20000.0; ++h)
+    harmonics += std::pow(magnitudeAt(x, from, count, h * freq), 2.0);
+  return std::sqrt(harmonics) / magnitudeAt(x, from, count, freq);
+}
+} // namespace
+
+// Reference numbers below come from real pedals: NAM captures of an Ibanez Tube
+// Screamer Mini (pelennor2170/NAM_models, "Tudor N", held-out ESR under 0.001),
+// measured through this plugin's own model runner. The Mini is a close relative of
+// the classic circuit, and the fit below shows how close. Level is matched at a
+// single knob setting: the real knob's numbers don't map to dB.
+TEST_CASE("The overdrive's response matches a real Tube Screamer's",
+          "[pedals][overdrive]") {
+  struct Point {
+    double hz, db;
+  };
+  const auto check = [](const OverdrivePedal::Settings &settings,
+                        std::initializer_list<Point> real) {
+    for (const auto &p : real) {
+      const double db = gainDb<OverdrivePedal>(settings, p.hz, 0.003f);
+      INFO(p.hz << " Hz: real " << p.db << " dB, plugin " << db << " dB");
+      CHECK(std::abs(db - p.db) < 1.6);
+    }
+  };
+  // Drive 0, Tone 10, Level 10: flat 20 dB of mids over clean lows, rolling off
+  // from 3.3 kHz.
+  check({true, 0.0f, 1.0f, 3.9f}, {{200.0, 9.1},
+                                   {500.0, 15.7},
+                                   {1000.0, 19.4},
+                                   {1600.0, 20.4},
+                                   {2500.0, 20.3},
+                                   {4000.0, 18.7},
+                                   {6300.0, 15.7}});
+  // Drive 5, Tone 5, Level 5: the classic setting, its treble going from 1 kHz.
+  check({true, 0.5f, 0.5f, -4.0f}, {{200.0, 8.2},
+                                    {500.0, 13.0},
+                                    {1000.0, 13.2},
+                                    {1600.0, 11.4},
+                                    {2500.0, 8.7},
+                                    {4000.0, 5.1},
+                                    {6300.0, 0.3}});
+}
+
+TEST_CASE("The overdrive saturates like a real Tube Screamer, at the same input "
+          "levels", "[pedals][overdrive]") {
+  // Drive 5, Tone 5, Level 5, 1 kHz. This is the check on the volts-per-full-scale
+  // calibration and the diode model: both have to be right for all of it to fit.
+  const OverdrivePedal::Settings noon{true, 0.5f, 0.5f, -4.0f};
+  for (const auto [amplitude, real] :
+       {std::pair{0.003f, 13.2}, std::pair{0.01f, 7.1}, std::pair{0.03f, 0.5},
+        std::pair{0.1f, -5.5}, std::pair{0.3f, -9.0}, std::pair{1.0f, -15.0}}) {
+    const double db = gainDb<OverdrivePedal>(noon, 1000.0, amplitude);
+    INFO("input " << amplitude << ": real " << real << " dB, plugin " << db << " dB");
+    CHECK(std::abs(db - real) < 1.0);
+  }
+}
+
+TEST_CASE("The overdrive stays clean in the lows and clips in the mids",
+          "[pedals][overdrive]") {
+  // The point of the circuit: unity below 720 Hz, so bass stays out of the diodes.
+  const OverdrivePedal::Settings low{true, 0.0f, 0.5f, 0.0f};
+  CHECK(thd<OverdrivePedal>(low, 80.0, 0.02f) < 0.01);
+  CHECK(thd<OverdrivePedal>(low, 1000.0, 0.1f) > 0.05);
+  // And a hump, even with Drive all the way down.
+  CHECK(gainDb<OverdrivePedal>(low, 800.0, 0.001f) -
+            gainDb<OverdrivePedal>(low, 80.0, 0.001f) > 10.0);
+  // More drive, more clipping, at the same input.
+  CHECK(thd<OverdrivePedal>({true, 1.0f, 1.0f, 0.0f}, 200.0, 0.02f) >
+        3.0 * thd<OverdrivePedal>({true, 0.0f, 1.0f, 0.0f}, 200.0, 0.02f));
+}
+
+TEST_CASE("The overdrive's Tone runs from the circuit's dark end to its bright "
+          "end", "[pedals][overdrive]") {
+  // Small signal, so this is the tone section alone: nodal analysis says a corner
+  // near 340 Hz with the knob down and flat to 3.3 kHz with it up.
+  const auto atTone = [](float tone, double hz) {
+    return gainDb<OverdrivePedal>({true, 0.0f, tone, 0.0f}, hz, 1.0e-4f);
+  };
+  CHECK(atTone(1.0f, 3000.0) - atTone(0.0f, 3000.0) > 15.0);
+  for (const double hz : {1000.0, 2000.0, 4000.0, 8000.0}) {
+    CHECK(atTone(0.5f, hz) > atTone(0.0f, hz));
+    CHECK(atTone(1.0f, hz) > atTone(0.5f, hz));
+  }
+  // Lows pass whatever the knob says.
+  CHECK(std::abs(atTone(1.0f, 80.0) - atTone(0.0f, 80.0)) < 3.0);
+}
+
+TEST_CASE("The distortion has the RAT circuit's gain", "[pedals][distortion]") {
+  const auto gain = [](float distortion, double hz, float tone = 1.0f) {
+    // So little signal the diodes stay out of it, with the filter wide open.
+    return gainDb<DistortionPedal>({true, distortion, tone, 0.0f}, hz, 1.0e-5f);
+  };
+  // All the way down it's a clean, flat buffer: 1 + 0 / R.
+  const double unity = gain(0.0f, 1000.0);
+  for (const double hz : {100.0, 500.0, 2000.0, 5000.0})
+    CHECK(std::abs(gain(0.0f, hz) - unity) < 1.0);
+
+  // All the way up: at 100 Hz the two legs to ground together are about 390R,
+  // so 1 + 100k / 390R = 48 dB. Published analysis puts the slow LM308 at no more
+  // than 30 dB at 10 kHz. The feedback's 2.2 uF leg has a 129 Hz to 1.5 kHz rise
+  // between them, which the op-amp cuts off short.
+  const auto full100 = gain(1.0f, 100.0) - unity;
+  const auto full10k = gain(1.0f, 10000.0) - unity;
+  INFO("100 Hz " << full100 << " dB, 10 kHz " << full10k << " dB");
+  CHECK(std::abs(full100 - 48.0) < 2.0);
+  CHECK(std::abs(full10k - 30.0) < 2.0);
+  CHECK(gain(1.0f, 500.0) - unity < 67.0); // the ideal op-amp's ceiling
+
+  // The audio-taper pot: 15% of 100k at noon is 1 + 15k / 390R = 32 dB.
+  CHECK(std::abs(gain(0.5f, 100.0) - unity - 32.0) < 2.0);
+  // Below the 60 Hz leg the gain falls away to unity.
+  CHECK(gain(1.0f, 100.0) - gain(1.0f, 15.0) > 8.0);
+}
+
+TEST_CASE("The distortion's Tone is the RAT's Filter pot", "[pedals][distortion]") {
+  const auto gain = [](float tone, double hz) {
+    return gainDb<DistortionPedal>({true, 0.0f, tone, 0.0f}, hz, 1.0e-5f);
+  };
+  const double flat = gain(1.0f, 100.0);
+  // 1.5k + 100k into 3.3 nF: -3 dB at 475 Hz with the knob at its dark end.
+  CHECK(std::abs(gain(0.0f, 475.0) - flat + 3.0) < 0.6);
+  // 1.5k into 3.3 nF: open past the audio band at the bright end.
+  CHECK(std::abs(gain(1.0f, 10000.0) - flat) < 0.8);
+  // 16.5k at noon, on an audio taper: 2.9 kHz.
+  CHECK(std::abs(gain(0.5f, 2920.0) - flat + 3.0) < 0.6);
+}
+
+TEST_CASE("The distortion goes from nearly clean to heavy, limited at the silicon "
+          "diode drop", "[pedals][distortion]") {
+  const DistortionPedal::Settings down{true, 0.0f, 1.0f, 0.0f};
+  const DistortionPedal::Settings noon{true, 0.5f, 1.0f, 0.0f};
+  CHECK(thd<DistortionPedal>(down, 200.0, 0.02f) < 0.01);
+  CHECK(thd<DistortionPedal>(noon, 200.0, 0.02f) > 0.2);
+
+  // However hard it's hit, its flat top sits at about 0.6 V, scaled by the same
+  // output gain as its unity gain. The median, as the band-limited edges overshoot.
+  DistortionPedal pedal;
+  pedal.prepare(rate);
+  auto x = sine(200.0, rate, (int)rate, 1.0f);
+  pedal.process(x.data(), (int)x.size(), {true, 1.0f, 1.0f, 0.0f});
+  std::vector<float> magnitudes;
+  for (size_t i = x.size() / 2; i < x.size(); ++i)
+    magnitudes.push_back(std::abs(x[i]));
+  std::nth_element(magnitudes.begin(), magnitudes.begin() + (long)magnitudes.size() / 2,
+                   magnitudes.end());
+  const auto flatGain = (float)juce::Decibels::decibelsToGain(
+      gainDb<DistortionPedal>(down, 1000.0, 1.0e-5f));
+  const float volts = magnitudes[magnitudes.size() / 2] / flatGain *
+                      (float)analog::voltsAtFullScale;
+  INFO("clips at " << volts << " V");
+  CHECK(volts > 0.55f);
+  CHECK(volts < 0.7f);
+}
+
+TEST_CASE("The fuzz has the Big Muff tone stack and sustain",
+          "[pedals][fuzz]") {
+  // Tone against itself, so the stages in front cancel out. So little signal
+  // the diodes stay out of it. Corners 408 Hz and 1.86 kHz.
+  const auto gain = [](float tone, double hz) {
+    return gainDb<FuzzPedal>({true, 0.5f, tone, 0.0f}, hz, 1.0e-6f);
+  };
+  CHECK(gain(0.0f, 100.0) - gain(1.0f, 100.0) > 12.0);
+  CHECK(gain(1.0f, 6000.0) - gain(0.0f, 6000.0) > 12.0);
+  // The scoop: at noon the middle is well under either end of the knob.
+  const double scoopAt = 800.0;
+  CHECK(gain(0.5f, scoopAt) < gain(0.0f, scoopAt) - 2.0);
+  CHECK(gain(0.5f, scoopAt) < gain(1.0f, scoopAt) - 2.0);
+
+  // Sustain: more of it clips sooner, and the bottom of the knob isn't silence.
+  const auto distortionAt = [](float fuzz) {
+    return thd<FuzzPedal>({true, fuzz, 0.5f, 0.0f}, 200.0, 1.0e-4f);
+  };
+  CHECK(distortionAt(0.0f) < 0.05);
+  CHECK(distortionAt(0.8f) > 3.0 * distortionAt(0.0f));
+  CHECK(gainDb<FuzzPedal>({true, 0.0f, 0.5f, 0.0f}, 200.0, 0.05f) > -40.0);
+}
+
+TEST_CASE("Drive pedals keep aliasing far below the signal", "[pedals]") {
+  // 3.1 kHz at 0.2 is harsher than a guitar: nearly a square wave with its
+  // harmonics way past what 4x oversampling can represent on their own.
+  const OverdrivePedal::Settings od{true, 1.0f, 1.0f, 0.0f};
+  const DistortionPedal::Settings dist{true, 1.0f, 1.0f, 0.0f};
+  const FuzzPedal::Settings fuzz{true, 0.7f, 0.7f, 0.0f};
+  constexpr int hard = 4283, soft = 1361; // 3137 and 997 Hz, whole cycles
+  CHECK(inharmonicDb<OverdrivePedal>(od, hard, 0.2f) < -65.0);
+  CHECK(inharmonicDb<DistortionPedal>(dist, hard, 0.2f) < -50.0);
+  CHECK(inharmonicDb<FuzzPedal>(fuzz, hard, 0.2f) < -70.0);
+  CHECK(inharmonicDb<OverdrivePedal>(od, soft, 0.05f) < -80.0);
+  CHECK(inharmonicDb<DistortionPedal>(dist, soft, 0.05f) < -60.0);
+  CHECK(inharmonicDb<FuzzPedal>(fuzz, soft, 0.05f) < -70.0);
+}
+
+TEST_CASE("Drive pedals sound the same at any sample rate", "[pedals]") {
+  const double sampleRate = GENERATE(44100.0, 48000.0, 96000.0, 192000.0);
+  INFO(sampleRate << " Hz");
+  const auto compare = [&](auto pedalTag, auto settings) {
+    using Pedal = decltype(pedalTag);
+    for (const double hz : {200.0, 1000.0, 5000.0})
+      for (const float amplitude : {1.0e-4f, 0.05f}) {
+        INFO(hz << " Hz at " << amplitude);
+        CHECK(std::abs(gainDb<Pedal>(settings, hz, amplitude, sampleRate) -
+                       gainDb<Pedal>(settings, hz, amplitude, 48000.0)) < 0.7);
+      }
+  };
+  compare(OverdrivePedal{}, OverdrivePedal::Settings{true, 0.5f, 0.5f, 0.0f});
+  compare(DistortionPedal{}, DistortionPedal::Settings{true, 0.5f, 0.7f, 0.0f});
+  compare(FuzzPedal{}, FuzzPedal::Settings{true, 0.7f, 0.5f, 0.0f});
+}
+
+TEST_CASE("Turning a drive pedal's knobs doesn't click", "[pedals]") {
+  // The biggest jump between samples, sweeping the knobs up and back down far
+  // faster than anyone turns one, against the same pedal with its knobs still. A
+  // near-square wave has big jumps of its own, so only more than that is a click.
+  const auto biggestJump = [](auto pedal, auto settings, auto knobsOf, bool moving,
+                              float still) {
+    pedal.prepare(rate);
+    auto x = sine(196.0, rate, (int)rate * 2, 0.02f);
+    float jump = 0.0f, previous = 0.0f;
+    for (size_t start = 0; start < x.size(); start += (size_t)block) {
+      const auto t = (float)start / (float)x.size();
+      const float position = moving ? (t < 0.5f ? 2.0f * t : 2.0f - 2.0f * t) : still;
+      for (auto *k : knobsOf(settings))
+        *k = position;
+      pedal.process(x.data() + start, block, settings);
+      for (size_t i = start + (size_t)block / 2; i < start + (size_t)block; ++i) {
+        REQUIRE(std::isfinite(x[i]));
+        if (start > 0)
+          jump = std::max(jump, std::abs(x[i] - previous));
+        previous = x[i];
+      }
+    }
+    return jump;
+  };
+  const auto check = [&](auto pedal, auto settings, auto knobsOf) {
+    float stillJump = 0.0f;
+    for (const float position : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f})
+      stillJump = std::max(stillJump,
+                           biggestJump(pedal, settings, knobsOf, false, position));
+    const float movingJump = biggestJump(pedal, settings, knobsOf, true, 0.0f);
+    INFO("moving " << movingJump << ", still " << stillJump);
+    CHECK(movingJump < 1.3f * stillJump + 1.0e-3f);
+  };
+  check(OverdrivePedal{}, OverdrivePedal::Settings{true},
+        [](auto &s) { return std::array{&s.drive, &s.tone}; });
+  check(DistortionPedal{}, DistortionPedal::Settings{true},
+        [](auto &s) { return std::array{&s.distortion, &s.tone}; });
+  check(FuzzPedal{}, FuzzPedal::Settings{true},
+        [](auto &s) { return std::array{&s.fuzz, &s.tone}; });
 }
 
 TEST_CASE("The wah sweeps from heel to toe, and Auto opens it as you pick",

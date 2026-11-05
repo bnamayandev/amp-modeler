@@ -1,5 +1,7 @@
 #pragma once
 
+#include "agent/ProcessorAmp.h"
+#include "agent/Session.h"
 #include "dsp/SampleTap.h"
 #include "dsp/SignalChain.h"
 #include "state/Parameters.h"
@@ -106,6 +108,11 @@ public:
   }
   Metronome &getMetronome() noexcept { return metronome; }
 
+  /** The chat outlives the editor, so closing the window doesn't lose it or stop
+      a turn. */
+  agent::Session &getAgent() noexcept { return agentSession; }
+  agent::AgentSettings &getAgentSettings() noexcept { return agentSettings.get(); }
+
   /** The editor tab last shown, so reopening the editor returns to it. */
   int editorPage = 0;
   juce::String getLastIrError() const;
@@ -145,6 +152,11 @@ private:
   juce::String lastLoggedModelSource;
   std::uint64_t blocksAtLastLog = 0;
   int ticksSinceLog = 0;
+
+  // Last, so the agent's thread has stopped before what it uses is destroyed.
+  juce::SharedResourcePointer<agent::AgentSettings> agentSettings;
+  agent::ProcessorAmp agentAmp;
+  agent::Session agentSession;
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EvilAmplifierProcessor)
 };

@@ -16,6 +16,15 @@ float stepSine(double &phase, float rateHz, double sampleRate) noexcept {
   return (float)std::sin(2.0 * std::numbers::pi * phase);
 }
 
+/** Advances an LFO phase in [0, 1) by one sample and returns its triangle, -1..1,
+   starting from 0 and rising like a sine. */
+float stepTriangle(double &phase, float rateHz, double sampleRate) noexcept {
+  phase += rateHz / sampleRate;
+  phase -= std::floor(phase);
+  const double p = phase + 0.25;
+  return (float)(4.0 * std::abs(p - std::floor(p + 0.5)) - 1.0);
+}
+
 /** Steps a smoothed knob and calls apply(value) every 16 samples while it moves,
    and at the top of each block. */
 template <typename Smoothed, typename Apply>
@@ -81,7 +90,8 @@ void WahPedal::process(float *data, int n, const Settings &s) noexcept {
           (juce::Decibels::gainToDecibels(envelope, -100.0f) + 45.0f) / 35.0f,
           0.0f, 1.0f);
       const float sweep = std::clamp(pos + amount * (1.0f - pos) * opened, 0.0f, 1.0f);
-      const float q = 1.5f * std::pow(6.0f, res); // 1.5..9
+      // 1.5..9 at the top of the sweep; a real one's Q falls towards the heel.
+      const float q = (0.55f + 0.45f * sweep) * 1.5f * std::pow(6.0f, res);
       const double g = std::tan(std::numbers::pi * 350.0 *
                                 std::pow(2200.0 / 350.0, (double)sweep) / sampleRate);
       k = 1.0f / q;
@@ -105,8 +115,8 @@ void WahPedal::process(float *data, int n, const Settings &s) noexcept {
 // --- Compressor -------------------------------------------------------------
 
 void CompressorPedal::prepare(double sampleRate) {
-  attackCoeff = coeffForTime(sampleRate, 0.008); // lets the pick attack through
-  releaseCoeff = coeffForTime(sampleRate, 0.18);
+  attackCoeff = coeffForTime(sampleRate, 0.005); // lets a little pick through
+  releaseCoeff = coeffForTime(sampleRate, 0.7);  // the long recovery of its 10 uF
   peakReleaseCoeff = coeffForTime(sampleRate, 0.04); // rides over a cycle
   sustain.reset(sampleRate, 0.05);
   blend.reset(sampleRate, 0.05);
@@ -135,8 +145,8 @@ void CompressorPedal::process(float *data, int n, const Settings &s) noexcept {
   constexpr float referenceDb = -12.0f; // make-up keeps this level unchanged
   for (int i = 0; i < n; ++i) {
     const float sus = sustain.getNextValue();
-    const float thresholdDb = -8.0f - 34.0f * sus;
-    const float slope = 1.0f - 1.0f / (2.0f + 8.0f * sus); // 1 - 1/ratio
+    const float thresholdDb = -6.0f - 36.0f * sus;
+    const float slope = 1.0f - 1.0f / (2.0f + 10.0f * sus); // 1 - 1/ratio
 
     const float x = data[i];
     const float rectified = std::abs(x);
@@ -169,10 +179,14 @@ void FuzzPedal::prepare(double sampleRate) {
   oversampler.prepare(sampleRate);
   rate = sampleRate * oversampler.getFactor();
   // Each stage's 470 pF across its 470k feedback resistor.
-  const auto feedback = BiquadCoeffs::onePoleLowPass(rate, cornerHz(470.0e3, 470.0e-12));
-  inputLowPass.setCoeffs(feedback);
-  feedback2.setCoeffs(feedback);
-  feedback3.setCoeffs(feedback);
+  // A stage that falls short of its ideal gain also rolls off that much later.
+  const auto feedback = [this](double idealGain) {
+    return BiquadCoeffs::onePoleLowPass(
+        rate, cornerHz(470.0e3, 470.0e-12) * idealGain / closedLoop(idealGain));
+  };
+  inputLowPass.setCoeffs(feedback(idealInputGain));
+  feedback2.setCoeffs(feedback(idealStage3Gain));
+  feedback3.setCoeffs(feedback(idealStage3Gain));
   // 1 uF into each stage's 10k input resistor.
   const auto coupled = BiquadCoeffs::onePoleHighPass(rate, cornerHz(10.0e3, 1.0e-6));
   coupling2.setCoeffs(coupled);
@@ -195,8 +209,8 @@ void FuzzPedal::reset() noexcept {
 
 void FuzzPedal::process(float *data, int n, const Settings &s) noexcept {
   constexpr double feedbackOhms = 470.0e3;
-  constexpr double inputGain = feedbackOhms / 39.0e3; // first stage, no diodes
-  constexpr double stage3Gain = feedbackOhms / 10.0e3;
+  const double inputGain = closedLoop(idealInputGain); // first stage, no diodes
+  const double stage3Gain = closedLoop(idealStage3Gain);
   constexpr double recoveryGain = 10.0e3 / 2.2e3; // the output transistor
   constexpr double outputScale = 0.5;             // about unity at the defaults
 
@@ -216,7 +230,11 @@ void FuzzPedal::process(float *data, int n, const Settings &s) noexcept {
     // to the second stage's 10k input resistor, lowering that stage's gain. A real
     // pot never quite reaches zero, so the knob's bottom isn't silence.
     sustainGain = 0.01 + 0.99 * audioTaper(knob);
-    stage2Gain = feedbackOhms / (10.0e3 + 100.0e3 * sustainGain * (1.0 - sustainGain));
+    const double ideal =
+        feedbackOhms / (10.0e3 + 100.0e3 * sustainGain * (1.0 - sustainGain));
+    stage2Gain = closedLoop(ideal);
+    feedback2.setCoeffs(BiquadCoeffs::onePoleLowPass(
+        rate, cornerHz(470.0e3, 470.0e-12) * ideal / stage2Gain));
   };
   const auto toneCoeffs = [this](float t) {
     // Nodal analysis of the tone stack: 39k and 10 nF to one end of a 100k pot,
@@ -387,9 +405,10 @@ void DistortionPedal::process(float *data, int n, const Settings &s) noexcept {
   };
   const auto toneCoeffs = [this](float t) {
     // 1.5k and the 100k Filter pot into 3.3 nF: 32 kHz down to 475 Hz. The real
-    // knob darkens clockwise; here 0 is dark.
+    // knob darkens clockwise; t is its reverse, so 0 is dark. Its corner at noon
+    // is 4.8 kHz, measured on a real pedal, so the pot is 8.5% at noon.
     return BiquadCoeffs::onePoleLowPass(
-        rate, cornerHz(1.5e3 + 100.0e3 * audioTaper(1.0 - t), 3.3e-9));
+        rate, cornerHz(1.5e3 + 100.0e3 * analog::potTaper(1.0 - t, 0.085), 3.3e-9));
   };
 
   const int factor = oversampler.getFactor();
@@ -483,7 +502,7 @@ void ChorusPedal::process(float *data, int n, const Settings &s) noexcept {
 
   const auto msToSamples = (float)(0.001 * sampleRate);
   for (int i = 0; i < n; ++i) {
-    const float lfo = stepSine(phase, rate.getNextValue(), sampleRate);
+    const float lfo = stepTriangle(phase, rate.getNextValue(), sampleRate);
     const float delayMs = 7.0f + 3.0f * depth.getNextValue() * lfo; // 4..10 ms
 
     const float x = data[i];
@@ -500,7 +519,6 @@ void DelayPedal::prepare(double newSampleRate) {
   line.setMaxDelay((int)std::ceil(maxTimeMs * 0.001 * sampleRate) + 4);
   onset.prepare(sampleRate);
   glideCoeff = coeffForTime(sampleRate, 0.12);
-  loopLowPass.setCoeffs(BiquadCoeffs::onePoleLowPass(sampleRate, 4800.0));
   loopHighPass.setCoeffs(BiquadCoeffs::onePoleHighPass(sampleRate, 90.0));
   feedback.reset(sampleRate, 0.05);
   mix.reset(sampleRate, 0.05);
@@ -512,7 +530,9 @@ void DelayPedal::reset() noexcept {
   onset.restart();
   loopLowPass.reset();
   loopHighPass.reset();
+  echoLowPass.reset();
   primed = false;
+  cornerSetFor = 0.0f;
 }
 
 void DelayPedal::process(float *data, int n, const Settings &s) noexcept {
@@ -530,8 +550,18 @@ void DelayPedal::process(float *data, int n, const Settings &s) noexcept {
 
   for (int i = 0; i < n; ++i) {
     delaySamples += glideCoeff * (target - delaySamples);
+    if ((i & 31) == 0 && std::abs(delaySamples - cornerSetFor) > 1.0f) {
+      // The longer the delay, the slower the bucket-brigade's clock, and the less
+      // bandwidth it has: about 7 kHz at 20 ms, 2.5 kHz at 600 ms.
+      cornerSetFor = delaySamples;
+      const double ms = 1000.0 * delaySamples / sampleRate;
+      const auto coeffs = BiquadCoeffs::onePoleLowPass(
+          sampleRate, 7000.0 * std::pow(20.0 / std::max(ms, 20.0), 0.3));
+      loopLowPass.setCoeffs(coeffs);
+      echoLowPass.setCoeffs(coeffs);
+    }
     // Read before pushing: delay d from now is d - 1 pushes back.
-    const float echo = line.hermite(delaySamples - 1.0f);
+    const float echo = echoLowPass.processSample(line.hermite(delaySamples - 1.0f));
     const float returned =
         loopLowPass.processSample(loopHighPass.processSample(echo));
     const float x = data[i];
@@ -655,8 +685,8 @@ void TremoloPedal::process(float *data, int n, const Settings &s) noexcept {
   shape.setTargetValue(s.shape);
 
   for (int i = 0; i < n; ++i) {
-    const float lfo = stepSine(phase, rate.getNextValue(), sampleRate);
-    // tanh squares the sine off as Shape goes up, normalised to keep +/-1.
+    const float lfo = stepTriangle(phase, rate.getNextValue(), sampleRate);
+    // tanh squares the triangle off as Wave goes up, normalised to keep +/-1.
     const float sh = shape.getNextValue();
     const float hardness = 0.05f + 12.0f * sh * sh;
     const float wave = std::tanh(hardness * lfo) / std::tanh(hardness);

@@ -60,11 +60,11 @@ private:
   bool primed = false;
 };
 
-/** Wah: a resonant band-pass swept from 350 Hz (heel) to 2.2 kHz (toe), the
-   range of the classic inductor wahs, as a state-variable filter that stays
-   smooth under fast sweeps. Auto adds an envelope follower that opens the
-   filter from the pedal position as you pick harder: all the way up it is an
-   envelope filter. */
+/** Wah after the Dunlop Cry Baby GCB-95: a resonant band-pass swept from 350 Hz
+   (heel) to 2.2 kHz (toe), the range Dunlop publishes, whose Q rises towards the
+   toe as a real one's does. Peak at noon is the stock pedal; the 33k Q resistor
+   mods go above that. Auto, which isn't on a real one, adds an envelope follower
+   that opens the filter as you pick harder, up to a full envelope filter. */
 class WahPedal {
 public:
   struct Settings {
@@ -88,8 +88,11 @@ private:
   bool primed = false;
 };
 
-/** Feed-forward compressor with a soft knee, auto make-up and a parallel blend.
-   Sustain lowers the threshold and raises the ratio together. */
+/** Compressor after the MXR Dyna Comp: Sensitivity lowers the threshold and raises
+   the ratio together, as its OTA does, with a quick attack that still lets some
+   pick through and a long release that gives it its bloom and its pumping. Output
+   is the output pot. Blend isn't on the original: all the way up, as it starts,
+   there's no dry signal, as on a real one. */
 class CompressorPedal {
 public:
   struct Settings {
@@ -114,10 +117,13 @@ private:
   bool primed = false, envelopePrimed = false;
 };
 
-/** Fuzz modelled on the Big Muff Pi circuit: a gain stage, the Sustain pot, two
+/** Fuzz modelled on the EHX Big Muff Pi circuit: a gain stage, the Sustain pot, two
    cascaded clipping stages with diodes and 470 pF in their feedback (which is
    what keeps it smooth), then the passive tone stack that crossfades a 408 Hz
-   low-pass with a 1.86 kHz high-pass and scoops the mids at noon. */
+   low-pass with a 1.86 kHz high-pass and scoops the mids at noon. The stages are
+   transistors with an open-loop gain of about 30, not ideal amplifiers, which
+   sets both how hard it clips and where its highs roll off: checked against
+   captures of a real NYC Big Muff. */
 class FuzzPedal {
 public:
   struct Settings {
@@ -132,11 +138,19 @@ public:
   void process(float *data, int n, const Settings &s) noexcept;
 
 private:
+  // What a transistor stage really gives, against what its resistors ask for.
+  static constexpr double openLoopGain = 30.0;
+  static constexpr double closedLoop(double idealGain) noexcept {
+    return idealGain * openLoopGain / (idealGain + openLoopGain);
+  }
+  static constexpr double idealInputGain = 470.0e3 / 39.0e3;
+  static constexpr double idealStage3Gain = 470.0e3 / 10.0e3;
+
   double rate = 48000.0; // the oversampled rate
   analog::Oversampler oversampler;
   analog::DiodeClipper stage2, stage3;
   Biquad inputLowPass, feedback2, feedback3, coupling2, coupling3, toneStack;
-  double sustainGain = 0.0, stage2Gain = 47.0;
+  double sustainGain = 0.0, stage2Gain = 18.0;
   juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> level;
   juce::SmoothedValue<float> fuzz, tone;
   bool primed = false;
@@ -182,7 +196,7 @@ public:
   struct Settings {
     bool on = false;
     float distortion = 0.6f; // 0..1
-    float tone = 0.5f;       // 0 dark .. 1 bright (the real Filter knob reversed)
+    float tone = 0.5f;       // 0 dark .. 1 bright: the Filter knob, reversed
     float levelDb = 0.0f;
   };
 
@@ -201,13 +215,14 @@ private:
   bool primed = false;
 };
 
-/** Clean boost with bass and treble shelves, to hit the amp harder or lift a
-   solo. Linear: it adds level, not distortion of its own. */
+/** Clean boost after the MXR Micro Amp: flat gain of 0 to 26 dB, to hit the amp
+   harder or lift a solo. Linear: it adds level, not distortion of its own. Bass
+   and Treble aren't on the original, and flat, as they start, it's the original. */
 class BoostPedal {
 public:
   struct Settings {
     bool on = false;
-    float gainDb = 9.0f;   // 0..20
+    float gainDb = 9.0f;   // 0..26
     float bassDb = 0.0f;   // +/-12, shelf at 120 Hz
     float trebleDb = 0.0f; // +/-12, shelf at 2.5 kHz
   };
@@ -224,8 +239,10 @@ private:
   bool primed = false;
 };
 
-/** Single-voice chorus: a 4-10 ms delay swept by a sine LFO, darkened a little
-   like a bucket-brigade line, mixed with the dry signal. */
+/** Chorus after the Boss CE-2: one bucket-brigade delay of 4-10 ms swept by a
+   triangle LFO, darkened as that kind of line is, mixed equally with the dry
+   signal. Mix isn't a knob on a CE-2: halfway, as it starts, is the original, and
+   all the way up is its vibrato. */
 class ChorusPedal {
 public:
   struct Settings {
@@ -249,9 +266,10 @@ private:
   bool primed = false;
 };
 
-/** Echo with a darkening, softly saturating feedback loop. Moving the time
-   knob glides the delay like a tape echo instead of jumping. The echoes are
-   added on top of the unchanged dry signal. */
+/** Echo after the MXR Carbon Copy: a bucket-brigade delay whose repeats get darker
+   the longer the delay is, as its clock slows, and which saturate softly. Moving
+   the time knob glides the delay instead of jumping. The echoes are added on top
+   of the unchanged dry signal. It goes well past the original's 600 ms. */
 class DelayPedal {
 public:
   static constexpr float maxTimeMs = 2000.0f;
@@ -272,14 +290,16 @@ private:
   DelayLine line;
   OnsetRamp onset;
   float delaySamples = 0.0f, glideCoeff = 0.0f;
-  Biquad loopLowPass, loopHighPass;
+  float cornerSetFor = 0.0f; // the delay the low-passes were last set for
+  Biquad loopLowPass, loopHighPass, echoLowPass;
   juce::SmoothedValue<float> feedback, mix;
   bool primed = false;
 };
-/** Four-stage phaser, the Phase 90 recipe: the signal through four swept
-   first-order all-passes is mixed equally with the dry signal, which cuts two
-   notches that move with the LFO. Feedback around the stages sharpens them
-   into resonant peaks. */
+/** Phaser after the MXR Phase 90: the signal through four swept first-order
+   all-passes is mixed equally with the dry signal, which cuts two notches that
+   move with the LFO. Speed is its one knob. The original's sweep is fixed: Depth
+   all the way up, as it starts, is that. Feedback around the stages sharpens the
+   notches into resonant peaks: a little is the block-logo pedal, none the script. */
 class PhaserPedal {
 public:
   struct Settings {
@@ -302,9 +322,9 @@ private:
   bool primed = false;
 };
 
-/** Flanger: a 0.7-7 ms delay swept by a slow LFO and mixed equally with the
-   dry signal, so the comb filter's notches sweep through the whole spectrum.
-   Feedback (regeneration) makes it ring like a jet. */
+/** Flanger after the MXR M117: a 0.7-7 ms bucket-brigade delay swept by a slow LFO
+   and mixed equally with the dry signal, so the comb filter's notches sweep
+   through the whole spectrum. Regen (feedback) makes it ring like a jet. */
 class FlangerPedal {
 public:
   struct Settings {
@@ -327,15 +347,15 @@ private:
   bool primed = false;
 };
 
-/** Tremolo: the volume pulses with an LFO that Shape squares off, from a
-   smooth throb like an optical tremolo to a hard chop. */
+/** Tremolo after the Boss TR-2: the volume pulses at 1.1 to 11 Hz with an LFO whose
+   Wave knob goes from a triangle, a smooth throb, to a square, a hard chop. */
 class TremoloPedal {
 public:
   struct Settings {
     bool on = false;
     float rateHz = 5.0f;
     float depth = 0.6f; // 0..1
-    float shape = 0.3f; // 0 sine .. 1 square
+    float shape = 0.3f; // 0 triangle .. 1 square
   };
 
   void prepare(double sampleRate);

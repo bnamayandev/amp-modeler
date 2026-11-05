@@ -1,7 +1,8 @@
-juce_add_console_app(evil_tests PRODUCT_NAME "evil_tests")
+juce_add_console_app(evil_tests PRODUCT_NAME "evil_tests" NEEDS_CURL TRUE)
 
 target_sources(evil_tests PRIVATE
     AllocationTracker.cpp
+    TestAgent.cpp
     TestMain.cpp
     TestDsp.cpp
     TestPedals.cpp

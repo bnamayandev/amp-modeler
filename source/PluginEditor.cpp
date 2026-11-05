@@ -24,6 +24,7 @@ juce::String formatEsr(double esr) {
 
 EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
     : AudioProcessorEditor(p), audioProcessor(p), pedalBoard(p.getState()),
+      agentPage(p.getAgent(), p.getAgentSettings()),
       inputKnob(p.getState(), params::input, "Input"),
       gateKnob(p.getState(), params::gateThreshold, "Gate"),
       gateAttachment(p.getState(), params::gateOn, gateButton),
@@ -37,7 +38,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
                                            "7/4"})) {
   // Header
   for (auto [page, tab] : {std::pair{0, &ampTab}, std::pair{1, &pedalsTab},
-                           std::pair{2, &tunerTab}}) {
+                           std::pair{2, &tunerTab}, std::pair{3, &agentTab}}) {
     gui::setTab(*tab);
     tab->onClick = [this, page = page] { showPage(page); };
     canvas.addAndMakeVisible(tab);
@@ -45,6 +46,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   ampTab.setTooltip("Amp, cabinet and EQ");
   pedalsTab.setTooltip("Stomp boxes before and after the amp");
   tunerTab.setTooltip("Tune your guitar, to standard or a tuning of your own");
+  agentTab.setTooltip("Ask for a tone, and an AI on your own API key sets it up");
   canvas.addAndMakeVisible(presetBox);
   presetBox.setTooltip("Presets: factory first, then yours");
   presetBox.onChange = [this] {
@@ -110,6 +112,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   canvas.addAndMakeVisible(ampPage);
   canvas.addChildComponent(pedalBoard);
   canvas.addChildComponent(tunerPage);
+  canvas.addChildComponent(agentPage);
 
   // Footer: metronome
   canvas.addAndMakeVisible(metronomeButton);
@@ -276,18 +279,20 @@ void EvilAmplifierEditor::layoutCanvas() {
   auto header = design.withHeight(headerHeight).reduced(16, 14);
   header.removeFromLeft(196);
   {
-    auto tabs = header.removeFromLeft(220).withBottom(headerHeight);
+    auto tabs = header.removeFromLeft(284).withBottom(headerHeight);
     ampTab.setBounds(tabs.removeFromLeft(60));
     tabs.removeFromLeft(4);
     pedalsTab.setBounds(tabs.removeFromLeft(92));
     tabs.removeFromLeft(4);
-    tunerTab.setBounds(tabs);
+    tunerTab.setBounds(tabs.removeFromLeft(60));
+    tabs.removeFromLeft(4);
+    agentTab.setBounds(tabs);
   }
-  header.removeFromLeft(24);
+  header.removeFromLeft(20);
   header = header.withSizeKeepingCentre(header.getWidth(), 30);
   prevPreset.setBounds(header.removeFromLeft(30));
   header.removeFromLeft(6);
-  presetBox.setBounds(header.removeFromLeft(256));
+  presetBox.setBounds(header.removeFromLeft(196));
   header.removeFromLeft(6);
   nextPreset.setBounds(header.removeFromLeft(30));
   header.removeFromLeft(12);
@@ -330,6 +335,7 @@ void EvilAmplifierEditor::layoutCanvas() {
                   .reduced(16, 12);
   pedalBoard.setBounds(body);
   tunerPage.setBounds(body);
+  agentPage.setBounds(body);
   auto top = body.removeFromTop(262);
   body.removeFromTop(12);
   auto bottom = body;
@@ -475,6 +481,8 @@ void EvilAmplifierEditor::timerCallback() {
     refreshIrStatus();
     refreshPedalsTab();
     refreshMetronome();
+    if (agentPage.isVisible())
+      agentPage.refresh();
     if (presetBox.getSelectedItemIndex() !=
         audioProcessor.getPresets().getCurrentIndex())
       presetBox.setSelectedItemIndex(
@@ -486,16 +494,20 @@ void EvilAmplifierEditor::timerCallback() {
 }
 
 void EvilAmplifierEditor::showPage(int page) {
-  page = juce::jlimit(0, 2, page);
+  page = juce::jlimit(0, 3, page);
   audioProcessor.editorPage = page;
   ampPage.setVisible(page == 0);
   pedalBoard.setVisible(page == 1);
   tunerPage.setVisible(page == 2);
+  agentPage.setVisible(page == 3);
   tunerPage.reset();
   ampTab.setToggleState(page == 0, juce::dontSendNotification);
   pedalsTab.setToggleState(page == 1, juce::dontSendNotification);
   tunerTab.setToggleState(page == 2, juce::dontSendNotification);
+  agentTab.setToggleState(page == 3, juce::dontSendNotification);
   refreshPedalsTab();
+  if (page == 3)
+    agentPage.pageShown();
   canvas.repaint();
 }
 
@@ -603,7 +615,10 @@ void EvilAmplifierEditor::refreshModelStatus() {
       details << ", held-out ESR " << formatEsr(i.testEsr);
     else if (i.validationEsr >= 0.0)
       details << ", validation ESR " << formatEsr(i.validationEsr);
-    if (i.gear.isNotEmpty())
+    if (const auto credit = agent::Tone3000::creditForSource(i.source);
+        credit.isNotEmpty())
+      details = credit + "\n" + details;
+    else if (i.gear.isNotEmpty())
       details = i.gear + "\n" + details;
     modelDetails.setText(details, juce::dontSendNotification);
     break;
@@ -618,10 +633,15 @@ void EvilAmplifierEditor::refreshIrStatus() {
   irName.setText(audioProcessor.getCab().getDisplayName(),
                  juce::dontSendNotification);
   const auto error = audioProcessor.getLastIrError();
+  if (const auto source = audioProcessor.getCab().getSource();
+      source != creditedIrSource) {
+    creditedIrSource = source;
+    irCredit = agent::Tone3000::creditForSource(source);
+  }
   irDetails.setText(
-      error.isNotEmpty()
-          ? error
-          : juce::String("Zero-latency convolution; IR swaps crossfade"),
+      error.isNotEmpty()      ? error
+      : irCredit.isNotEmpty() ? irCredit
+                              : juce::String("Zero-latency convolution; IR swaps crossfade"),
       juce::dontSendNotification);
   irDetails.setColour(juce::Label::textColourId, error.isNotEmpty()
                                                      ? gui::colours::accent()

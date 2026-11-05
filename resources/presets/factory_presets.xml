@@ -27,7 +27,7 @@
     <Param id="od_on" value="1"/>
     <Param id="od_drive" value="0.2"/>
     <Param id="od_tone" value="0.55"/>
-    <Param id="od_level" value="6"/>
+    <Param id="od_level" value="3.9"/>
   </Preset>
   <Preset name="Fuzz Lead" model="builtin:BlackstarHT1" ir="builtin:EvilCab4x12">
     <Param id="input" value="-3"/>
@@ -35,6 +35,7 @@
     <Param id="fuzz_on" value="1"/>
     <Param id="fuzz_fuzz" value="0.75"/>
     <Param id="fuzz_tone" value="0.65"/>
+    <Param id="fuzz_level" value="0"/>
     <Param id="eq_400" value="0.5"/>
     <Param id="eq_800" value="2"/>
     <Param id="eq_1k6" value="0.5"/>

@@ -14,61 +14,63 @@ const std::array<Pedal::Spec, 12> &pedalSpecs() {
       {"wah", p::wahOn,
        {{{p::wahPosition, "Pedal"}, {p::wahAuto, "Auto"},
          {p::wahResonance, "Peak"}}},
-       "Sweep Pedal from heel to toe, or map it to an expression pedal in "
-       "your host. Auto opens the filter as you pick harder, for an envelope "
-       "filter."},
+       "After a Dunlop Cry Baby. Pedal is the rocker, heel to toe; Peak at noon "
+       "is the stock pedal. Auto isn't on a real one: it opens the filter as you "
+       "pick harder, for an envelope filter."},
       {"compressor", p::compOn,
-       {{{p::compSustain, "Sustain"}, {p::compBlend, "Blend"},
-         {p::compLevel, "Level"}}},
-       "Evens out your picking and lengthens sustain. Blend mixes the "
-       "uncompressed signal back in to keep the pick attack."},
+       {{{p::compSustain, "Sens"}, {p::compBlend, "Blend"},
+         {p::compLevel, "Output"}}},
+       "After an MXR Dyna Comp: its Sensitivity and Output. Blend isn't on the "
+       "original; all the way up is the original."},
       {"fuzz", p::fuzzOn,
-       {{{p::fuzzAmount, "Fuzz"}, {p::fuzzTone, "Tone"},
-         {p::fuzzLevel, "Level"}}},
-       "Big Muff style: two clipping stages into a tone control that scoops "
+       {{{p::fuzzAmount, "Sustain"}, {p::fuzzTone, "Tone"},
+         {p::fuzzLevel, "Volume"}}},
+       "An EHX Big Muff Pi circuit, its knobs where a real one's are. Tone scoops "
        "the mids at noon, dark and wooly to the left, cutting to the right."},
       {"overdrive", p::odOn,
        {{{p::odDrive, "Drive"}, {p::odTone, "Tone"}, {p::odLevel, "Level"}}},
-       "Tube Screamer style: thins the lows and pushes the mids. Low drive "
-       "and high level tightens a dirty amp; on a clean amp it's a crunch "
-       "tone of its own."},
+       "An Ibanez Tube Screamer circuit, its knobs where a real one's are. Thins "
+       "the lows and pushes the mids. Low drive and high level tightens a dirty "
+       "amp; on a clean amp it's a crunch tone of its own."},
       {"distortion", p::distOn,
-       {{{p::distAmount, "Dist"}, {p::distTone, "Tone"},
-         {p::distLevel, "Level"}}},
-       "RAT style: nearly clean with Dist down, heavy from noon up, and "
-       "smoother as it goes. Tone runs from muffled to raw, and opens up "
-       "above noon."},
+       {{{p::distAmount, "Dist"}, {p::distTone, "Filter"},
+         {p::distLevel, "Volume"}}},
+       "A ProCo RAT circuit, its knobs where a real one's are: nearly clean with "
+       "Dist down, heavy from noon up. Filter darkens clockwise, as on a real one."},
       {"boost", p::boostOn,
-       {{{p::boostGain, "Boost"}, {p::boostBass, "Bass"},
+       {{{p::boostGain, "Gain"}, {p::boostBass, "Bass"},
          {p::boostTreble, "Treble"}}},
-       "Clean boost with bass and treble shelves: hits the amp harder or "
-       "lifts a solo."},
+       "After an MXR Micro Amp: up to 26 dB of clean gain, to hit the amp harder "
+       "or lift a solo. Bass and Treble aren't on the original; at noon they're "
+       "flat."},
       {"phaser", p::phaserOn,
-       {{{p::phaserRate, "Rate"}, {p::phaserDepth, "Depth"},
+       {{{p::phaserRate, "Speed"}, {p::phaserDepth, "Depth"},
          {p::phaserFeedback, "Feedback"}}},
-       "Four-stage phaser. Feedback sharpens the sweep into a vocal "
-       "resonance."},
+       "After an MXR Phase 90: Speed is its one knob. Depth all the way up is the "
+       "original's sweep. Feedback sharpens it into a vocal resonance."},
       {"flanger", p::flangerOn,
-       {{{p::flangerRate, "Rate"}, {p::flangerDepth, "Depth"},
-         {p::flangerFeedback, "Feedback"}}},
-       "Jet-plane flanger. A slow rate and high feedback for the classic "
-       "whoosh."},
+       {{{p::flangerRate, "Speed"}, {p::flangerDepth, "Width"},
+         {p::flangerFeedback, "Regen"}}},
+       "After an MXR M117. A slow speed and high regen for the classic whoosh."},
       {"chorus", p::chorusOn,
        {{{p::chorusRate, "Rate"}, {p::chorusDepth, "Depth"},
          {p::chorusMix, "Mix"}}},
-       "Classic single-voice chorus."},
+       "After a Boss CE-2. Mix isn't on the original: noon is the original, and "
+       "all the way up its vibrato."},
       {"tremolo", p::tremOn,
        {{{p::tremRate, "Rate"}, {p::tremDepth, "Depth"},
-         {p::tremShape, "Shape"}}},
-       "Volume pulse. Shape goes from a smooth throb to a hard chop."},
+         {p::tremShape, "Wave"}}},
+       "After a Boss TR-2. Wave goes from a triangle, a smooth throb, to a square, "
+       "a hard chop."},
       {"delay", p::delayOn,
-       {{{p::delayTime, "Time"}, {p::delayFeedback, "Feedback"},
+       {{{p::delayTime, "Delay"}, {p::delayFeedback, "Regen"},
          {p::delayMix, "Mix"}}},
-       "Echo with darkening repeats. Moving Time glides like a tape echo."},
+       "After an MXR Carbon Copy: repeats get darker the longer the delay. It goes "
+       "well past the original's 600 ms."},
       {"reverb", p::reverbOn,
        {{{p::reverbDecay, "Decay"}, {p::reverbTone, "Tone"},
          {p::reverbMix, "Mix"}}},
-       "Plate reverb."},
+       "Plate reverb. Not modelled on a particular pedal."},
 }};
   return specs;
 }

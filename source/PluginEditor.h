@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "gui/AgentPage.h"
 #include "gui/EvilLookAndFeel.h"
 #include "gui/PedalBoard.h"
 #include "gui/Settings.h"
@@ -64,7 +65,8 @@ private:
   juce::TooltipWindow tooltips{this, 600};
 
   // Header
-  juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"}, tunerTab{"tuner"};
+  juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"}, tunerTab{"tuner"},
+      agentTab{"agent"};
   juce::ComboBox presetBox;
   juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"save"};
   juce::TextButton settingsButton{"settings"};
@@ -74,6 +76,7 @@ private:
   juce::Component ampPage;
   gui::PedalBoard pedalBoard;
   gui::TunerPage tunerPage;
+  gui::AgentPage agentPage;
 
   // Input
   gui::Knob inputKnob, gateKnob;
@@ -123,6 +126,7 @@ private:
   std::unique_ptr<juce::FileChooser> chooser;
   juce::File lastModelDirectory, lastIrDirectory;
   int textRefreshCounter = 0;
+  juce::String creditedIrSource, irCredit; // read from disk only when it changes
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EvilAmplifierEditor)
 };

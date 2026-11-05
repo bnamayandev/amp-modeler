@@ -76,9 +76,11 @@ plugin where your DAW looks:
   any rate, mono or first channel of stereo, up to 2 s). A real IR will always be better than the
   built-in one. IRs are energy-normalised and swap without clicks.
   Turn it off for models that already include a cab (mic'd captures).
-- **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz, ±10 dB each.
-  The faders have a parabolic taper, fine around 0 dB, over a live spectrum of
-  the output.
+- **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz (a Boss GE-7's seven plus
+  one at each end), ±15 dB each. A fader's number is exactly the change in dB at its band, however
+  its neighbours are set: the filters allow for how they overlap, where a plain graphic EQ would
+  give +8.7 dB for five faders at +6. The faders have a parabolic taper, fine around 0 dB, over a
+  live spectrum of the output.
   Presets and sessions saved with the old bass/mid/treble EQ load with the nearest
   band settings.
 - **Pedals** (the *pedals* tab; its label counts the pedals that are on): two rows in signal
@@ -86,28 +88,26 @@ plugin where your DAW looks:
   flanger, chorus, tremolo, delay and reverb after the cab, like an effects loop.
   Click a footswitch to turn a pedal on; switching crossfades over 10 ms, and a pedal that's
   off is skipped entirely (bit-exact pass-through, no CPU).
-  - *Wah*: Pedal (heel to toe, 350 Hz to 2.2 kHz; automate it or map an expression pedal in
-    your host), Auto (an envelope follower opens the filter as you pick harder, up to a full
-    envelope filter), Peak (resonance).
-  - *Compressor*: Sustain (threshold and ratio together), Blend (parallel compression),
-    Level. *Boost*: clean gain (0 to +20 dB) with bass and treble shelves.
-  - *Overdrive*, *Distortion* and *Fuzz* are circuit models of the Tube Screamer, ProCo RAT and
-    Big Muff Pi, with those pedals' component values and pot tapers (see
-    [drive pedals](#drive-pedals)), so they behave like them at the same knob positions. Level
-    is in dB: 0 is about unity on a guitar at the default settings.
-    - *Overdrive*: thins the lows and pushes the mids, even with Drive at 0. Low drive and high
-      level tightens a dirty amp; on a clean amp it's a crunch tone of its own. Noon on the real
-      pedal's Level knob is about -4 dB here, and full up about +4 dB.
-    - *Distortion*: nearly clean with Dist down, heavy from noon up, and smoother as it goes.
-      Tone is the RAT's Filter knob reversed, 475 Hz at 0 to fully open at 10, and it
-      opens up above noon.
-    - *Fuzz*: the knob is the Muff's Sustain. Tone scoops the mids at noon, dark and wooly below,
-      cutting above.
-  - *Phaser*: four-stage, with feedback. *Flanger*: 0.7 to 7 ms sweep with feedback.
-    *Chorus*: Rate, Depth, Mix. *Tremolo*: Rate, Depth and Shape (sine to square).
-    *Delay*: 20 ms to 2 s; turning Time glides like a tape echo and repeats get darker.
-    *Reverb*: Dattorro plate. Delay and reverb add their wet signal on top of an unchanged
-    dry signal.
+
+  Each slot is modelled on one standard pedal, and a knob's pointer sits where that pedal's would:
+  noon here is noon on the real thing. See [the reference pedals](#the-reference-pedals).
+  - *Wah*: Cry Baby. Pedal (heel to toe, 350 Hz to 2.2 kHz; automate it or map an expression pedal
+    in your host), Peak (noon is stock), and Auto, not on the original (an envelope follower opens
+    the filter as you pick harder, up to a full envelope filter).
+  - *Compressor*: Dyna Comp. Sens, Output, and Blend, not on the original (full up is the original).
+  - *Fuzz*: Big Muff Pi. Sustain, Tone (scoops the mids at noon, dark and wooly below, cutting
+    above), Volume.
+  - *Overdrive*: Tube Screamer. Drive, Tone, Level. Thins the lows and pushes the mids, even with
+    Drive at 0. Low drive and high level tightens a dirty amp; on a clean amp it's a crunch tone.
+  - *Distortion*: ProCo RAT. Dist (nearly clean when down, heavy from noon up, smoother as it goes),
+    Filter (as on a real one, darker clockwise), Volume.
+  - *Boost*: Micro Amp. Gain (0 to +26 dB), and Bass and Treble, not on the original (flat at noon).
+  - *Phaser*: Phase 90. Speed, and Depth and Feedback, not on the original.
+    *Flanger*: M117. Speed, Width, Regen. *Chorus*: CE-2. Rate, Depth, and Mix, not on the original
+    (noon is the original). *Tremolo*: TR-2. Rate, Depth, Wave (triangle to square).
+    *Delay*: Carbon Copy. 20 ms to 2 s, past the original's 600 ms; repeats get darker the longer
+    the delay. *Reverb*: Dattorro plate. Delay and reverb add their wet signal on top of an
+    unchanged dry signal.
   - All twelve pedals and the transposer together add ~7% of the block deadline
     (`evil-cli bench --pedals all --transpose -2`), most of it the three drive pedals: about
     1.6% for the overdrive, 0.8% for the distortion and 3% for the fuzz.
@@ -121,6 +121,8 @@ plugin where your DAW looks:
     number to lock onto it: the meter then says how far to go, in semitones if need be.
   - It hears the guitar itself, before the input gain, gate and transposer, and keeps working
     while the plugin is bypassed. Your sound isn't muted while you tune.
+- **Agent** (the *agent* tab): tell it the sound you're after, and an AI model on your own API
+  key looks up the gear and sets up the amp. See [the agent](#the-agent).
 - **Transpose** (bottom right): ±12 semitones, e.g. -1 for E-flat tuning. Polyphonic, with
   splices aligned to the waveform; it costs ~16 ms of delay while on, and 0 ("off") bypasses
   it completely.
@@ -136,6 +138,77 @@ plugin where your DAW looks:
   (macOS) or `%APPDATA%\EvilAmplifier\` (Windows).
 - The editor is resizable (fixed aspect ratio, 60% to 200%).
 
+## The agent
+
+A chat that researches tones and sets up the amp. Name a song or an artist and your guitar, and it
+searches for the gear on the record, finds captures of that gear on
+[TONE3000](https://www.tone3000.com), loads them, sets the pedals and EQ, and allows for your
+pickups. Then "make it creamier" or "add a fuzz" adjusts what's there. Everything it does is
+listed as it happens, and **revert to before this** undoes a whole answer. No tones are stored in
+it: everything about a song comes from what it finds at the time.
+
+If a song's sound changes between parts, the pedals for later parts are left off with their knobs
+already set, and its answer ends with a plan of what to stomp on when.
+
+It can't hear, so it measures: **measure_tone** plays a test guitar through a private copy of the amp
+and reports the spectrum, distortion and touch response (how much louder it gets when picked 12 dB
+harder), against the capture alone. `evil-cli measure` shows the same reading for any setup. It
+takes knob positions as a guide gives them, by clock or 0-10, and starts each new tone by clearing
+what the last one left.
+
+**Setup.** Under **keys**, paste an API key for any of these. You pay the provider directly, and
+requests go straight from your computer to them.
+
+| | Default model | Other suggestions | Its web search |
+|---|---|---|---|
+| Claude | `claude-opus-5-5` | `claude-sonnet-5-5`, `claude-haiku-5-5` | Anthropic's web search tool |
+| ChatGPT | `gpt-6.1-sol` | `gpt-6-astra`, `gpt-6.1-terra`, `gpt-6-luna` | OpenAI's web search tool |
+| Gemini | `gemini-3.8-flash` | `gemini-4-argon`, `gemini-3.6-flash`, `gemini-3.5-flash-lite` | Grounding with Google Search |
+
+The model box takes any name, for when these lists date. Searches can cost extra, beyond the
+tokens shown after each answer, and stop after 15 for each message. A message about a song can
+take a lot of tokens (about 200k in testing), as the research all goes back through the model.
+
+For captures, also paste your TONE3000 *publishable* key (`t3k_pub_...`, from
+[your settings](https://www.tone3000.com/settings)), click **sign in**, and enter the code it shows
+at tone3000.com/activate, on your phone or any browser. That's the only time: the amp refreshes its
+sign-in from then on, and no browser has to stay open. Without it the agent still works, with the
+built-in capture and the pedals. If the agent needs TONE3000 and you're not signed in, it shows the
+code in the chat and waits two minutes, once, then carries on without.
+
+**How it finds captures.** TONE3000's free tier, which an open-source amp falls under, allows its
+sign-in flows and bounded lists but not its search endpoint. So the agent finds tone pages with its
+own web search and fetches those tones by ID, which is the pattern TONE3000's Load Tone example
+uses. **browse tone3000** opens the full catalog for picking one yourself, and it's the only thing
+that opens your browser. Files download to
+`Tone3000/` beside your presets, only when asked for, and stay credited to their creators on the
+amp page. Presets that use them keep working offline.
+
+**What it can do.** Only this: set the controls, load a built-in, read TONE3000 tones and load
+their files, all by ID. It has no general web fetch and no file access, and what it reads on the web
+is treated as untrusted, so the worst a bad page can do is a bad tone you can revert. It can't touch
+the transposer or metronome. The sign-in token only goes to TONE3000 over https. Links in the chat
+open only if they're http or https.
+
+**Level.** A NAM capture can be far louder than the last one, so the output is pulled down before a
+swap and set from the two captures' loudness figures after it (6 dB under where it was if a capture
+has no figure). The agent can raise the output by at most 6 dB at a time, up to +6 dB, and the input
+to +12 dB. These are enforced by the amp, not by asking the model.
+
+**Your keys** are kept in `agent.xml` beside your presets, readable only by your user. That's a
+plain file, not the OS keychain. They're never in presets, sessions or the log.
+
+**Limits.** There's one neural slot and it's the amp, so a capture of a pedal can't sit in front of
+it: the agent uses the closest built-in pedal and says so. Replies appear when finished rather than
+word by word. Google's terms want its Search Suggestions shown with grounded answers; they arrive as
+HTML and this build has no web view, so they're shown as ordinary links.
+
+**Without a window:** `evil-cli agent "Make it creamier"` runs the same agent on a headless copy of
+the amp and prints what it did. It takes keys from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY` and `TONE3000_PUBLISHABLE_KEY`, and doesn't save them. It shares the amp's
+TONE3000 sign-in: `evil-cli tone3000 connect` signs in by code from a terminal, even over SSH, and
+`evil-cli tone3000 status` checks it still works.
+
 ## Build
 
 Requirements: CMake ≥ 3.24, a C++20 compiler (Xcode 14+, Visual Studio 2022, GCC 11+ or Clang
@@ -145,6 +218,7 @@ Catch2) are fetched at configure time, pinned to exact versions.
 ```bash
 # Linux only: sudo apt install ninja-build libasound2-dev libfreetype-dev libfontconfig1-dev \
 #   libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev libxrender-dev libgl1-mesa-dev \
+#   libcurl4-openssl-dev \  # JUCE's only HTTPS on Linux, for the agent
 #   libjack-jackd2-dev pipewire-jack   # optional: JACK support in the standalone
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
@@ -170,7 +244,7 @@ It also smoke-tests the training pipeline end to end.
 ## Test and measure
 
 ```bash
-build/tests/evil_tests_artefacts/Release/evil_tests          # 63 test cases
+build/tests/evil_tests_artefacts/Release/evil_tests          # 123 test cases
 pluginval --strictness-level 10 --validate-in-process "build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3"
 
 cli=build/evil-cli_artefacts/Release/evil-cli
@@ -179,6 +253,7 @@ $cli esr test-in.wav test-target.wav --model my.nam            # held-out ESR th
 $cli render guitar.wav out.wav --model my.nam --ir cab.wav     # offline render, latency compensated
 $cli render guitar.wav out.wav --no-model --no-cab --pedals od --set od_drive=0.3,od_tone=0.6  # any knob, by id
 $cli info my.nam
+$cli agent "Make it creamier" --provider anthropic             # the agent, with no window
 build/evil-snapshot_artefacts/Release/evil-snapshot shots/     # render the GUI to PNG, no window needed
 ```
 
@@ -195,11 +270,19 @@ The tests cover:
   exactly the reported latency at 44.1/48/96 kHz.
 - **DSP**: bit-exact pass-through with everything neutral, gate hysteresis and hold, EQ band
   gains, IR swaps without discontinuities.
-- **Drive pedals**: the overdrive against real Tube Screamer measurements, the distortion and
-  fuzz against their circuits' published values, aliasing, and the same sound at any sample rate.
+- **Drive pedals**: all three against numbers measured from captures of the real pedals (the captures
+  themselves aren't in this repository), aliasing, and the same sound at any sample rate.
+- **Knobs and EQ**: pointers where the real pedals' would be, and every EQ fader giving its stated
+  dB at its band, in any combination.
 - **Tuner**: pitch within a cent from E1 to E6 at 44.1 to 192 kHz, plucked strings without
   octave errors even with a weak fundamental, silence on hum and noise; note and tuning
   parsing, picking the octave, and saved tunings surviving a reload or a damaged file.
+- **Agent**: each provider's requests and replies, built from its documentation (no key needed):
+  signed thinking kept verbatim, resuming paused searches, retries, and a real bad-key error
+  captured from Google. Sign-in by code without opening anything, staying signed in across restarts
+  and other copies of the amp, the catalog over a real loopback socket with PKCE and a forged redirect
+  refused, the HTTP client over a real local socket, downloads refusing unsafe URLs and names, the
+  level limits, revert, and closing the plugin mid-request without a deadlock.
 - **CPU budget**: the chain stays under 25% of the deadline (skipped on CI runners, where
   timing is noisy).
 
@@ -279,9 +362,37 @@ real guitar DI through a real amp and cab, and its 1 kHz saturation curve fits w
 0.003 to full scale. The S-shaped Tone law and the 3 V rail are fitted to those captures, and
 the knob positions in their names are approximate.
 
-**The distortion and fuzz are from their circuits alone**: no captures of a RAT or Muff were
-available to check them against. The op-amp's slew limit and the transistors' own soft clipping
-aren't modelled.
+The distortion is checked against captures from TONE3000 of a real ProCo RAT. Its Filter response
+is within about 1 dB at noon, which is how its pot's curve was set, and the gain from Distortion down
+to noon is within about 2 dB. The fuzz is checked against captures of a real NYC Big Muff. Its
+transistors have an open-loop gain of about 30, not the ideal amplifiers they were first modelled
+as, which fits both its response (within about 2.5 dB at the points tested, with bumps of up to 6 dB
+around 3 to 6 kHz at some settings) and the change in gain with Sustain. How early it starts to clip
+couldn't be fully checked, as that capture's input level isn't documented; it may still clip a little
+early. The op-amp's slew limit and the transistors' own soft clipping aren't modelled.
+
+### The reference pedals
+
+Knob pointers follow these pedals' pots, so a setting for the real pedal goes straight across. Levels
+are still stored in dB, so a saved level stays the same number of dB. Presets and sessions made
+before these pedals and the EQ were corrected will sound different where they use them: most of all
+the fuzz, which has much less gain, and EQ moves, which no longer overshoot. Host automation of a
+level knob follows the new curve.
+
+| Slot | Modelled on | Basis |
+|---|---|---|
+| Overdrive | Ibanez Tube Screamer | Circuit, checked against captures of a TS9 and a TS Mini. Level curve measured on both. |
+| Distortion | ProCo RAT | Circuit, checked against captures. Volume curve estimated. |
+| Fuzz | EHX Big Muff Pi (NYC) | Circuit, checked against captures. Volume curve estimated. |
+| Boost | MXR Micro Amp | Its commonly quoted gain range, not checked against a source. Knob curve estimated. |
+| Compressor | MXR Dyna Comp | Its behaviour, approximately. Not measured. |
+| Wah | Dunlop Cry Baby GCB-95 | Dunlop's published sweep. Q curve approximate. |
+| Phaser | MXR Phase 90 | Its four-stage recipe. Rates approximate. |
+| Flanger | MXR M117 | Controls and character only. |
+| Chorus | Boss CE-2 | Its recipe: one delay, triangle LFO, equal mix. Rates approximate. |
+| Tremolo | Boss TR-2 | Published LFO range, triangle to square. |
+| Delay | MXR Carbon Copy | Published time range, darker when longer. Darkening curve estimated. |
+| Reverb | None in particular | A plate. |
 
 **Deviations from the brief, and why:**
 
@@ -306,11 +417,12 @@ source/dsp/        SignalChain, ModelManager, NamModelRunner, StreamingResampler
                    Equaliser, NoiseGate, Biquad, Pedals, AnalogStages, ReverbPedal, PitchShifter,
                    PitchDetector, Metronome, DelayLine
 source/state/      parameters, presets, tunings
-source/gui/        look and feel, knobs, meters, pedal board, tuner page
+source/gui/        look and feel, knobs, meters, pedal board, tuner page, agent page
+source/agent/      the chat: LLM providers, tools and their limits, TONE3000, HTTPS, saved keys
 source/            PluginProcessor, PluginEditor
-resources/         bundled model (+ training report), synthetic cab IR, factory presets
+resources/         bundled model (+ training report), synthetic cab IR, factory presets, TONE3000 logos
 tests/             Catch2 suite, allocation tracker, parity data
-tools/             evil-cli (render, esr, bench, info), evil-snapshot (offscreen GUI render)
+tools/             evil-cli (render, esr, bench, info, agent, measure), evil-snapshot (offscreen GUI render)
 training/          PyTorch trainer, capture signal generator, IR generator, golden-data generator
 ```
 

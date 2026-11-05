@@ -8,8 +8,10 @@
 // layout scales uniformly, pedals.png: the pedal page with a few pedals on,
 // tuner-idle.png, tuner.png, tuner-in-tune.png and tuner-locked.png: the tuner
 // page with a custom tuning, hearing notes played into the processor, and
-// settings.png: the settings popover open, with a blue accent. The saved accent
-// and tuning are ignored, so every shot starts from the default.
+// settings.png: the settings popover open, with a blue accent, and agent-keys.png,
+// agent-sign-in.png, agent-empty.png and agent-chat.png: the agent tab, with made-up keys and a
+// made-up conversation. The saved accent, tuning and keys are ignored, so every
+// shot starts from the default and none can show a real key.
 
 #include "PluginEditor.h"
 
@@ -92,6 +94,11 @@ int main(int argc, char **argv) {
   juce::SharedResourcePointer<evil::gui::Settings> settings;
   evil::gui::colours::setAccentHue(evil::gui::colours::defaultAccentHue);
 
+  // Before anything reads it, so the player's real keys never get near a shot.
+  juce::SharedResourcePointer<evil::agent::AgentSettings> agentSettings;
+  const juce::TemporaryFile agentFile(".xml");
+  agentSettings->useFile(agentFile.getFile());
+
   evil::EvilAmplifierProcessor processor;
   processor.prepareToPlay(48000.0, 128);
 
@@ -164,6 +171,63 @@ int main(int argc, char **argv) {
     std::cout << "FAILED: no settings button" << std::endl;
     ok = false;
   }
+
+  evil::gui::colours::setAccentHue(evil::gui::colours::defaultAccentHue);
+  editor.reset();
+  processor.editorPage = 3;
+  editor.reset(processor.createEditor()); // no key yet: opens on the keys
+  ok = save(*editor, dir.getChildFile("agent-keys.png"), 1.5f) && ok;
+
+  agentSettings->set(evil::agent::AgentSettings::tone3000Key, "t3k_pub_not_real");
+  processor.getAgent().showForSnapshot(
+      {}, {"WXYZ-1234", "https://www.tone3000.com/activate",
+           "https://www.tone3000.com/activate?code=WXYZ-1234"});
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("agent-sign-in.png"), 1.5f) && ok;
+  processor.getAgent().showForSnapshot({});
+
+  using Entry = evil::agent::Session::Entry;
+  agentSettings->setApiKey(evil::agent::ProviderId::anthropic, "not-a-real-key");
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("agent-empty.png"), 1.5f) && ok;
+
+  const auto entry = [](Entry::Kind kind, const juce::String &text) {
+    Entry e;
+    e.kind = kind;
+    e.text = text;
+    return e;
+  };
+  std::vector<Entry> chat;
+  // Made up, and about nothing real: this is only to look at the layout.
+  chat.push_back(entry(Entry::Kind::user, "A tone like Example Song. I have an Example Guitar."));
+  chat.push_back(entry(Entry::Kind::activity, "searched the web: Example Song guitar gear"));
+  chat.push_back(entry(Entry::Kind::activity,
+                       "searched the web: tone3000 Example Amp NAM capture"));
+  auto loaded = entry(Entry::Kind::activity,
+                      "loaded amp: Example Amp by somebody (T3K licence), through the cabinet");
+  loaded.sources.push_back({"on TONE3000", "https://www.tone3000.com/tones/example-1"});
+  chat.push_back(std::move(loaded));
+  chat.push_back(entry(Entry::Kind::activity,
+                       "set Input -4.0 dB, EQ 3.2kHz 2.5 dB, OD Drive 3.0, OD Tone 6.0, "
+                       "OD Level -1.5 dB, Boost Gain 11.7 dB"));
+  auto answer = entry(
+      Entry::Kind::assistant,
+      "This is where the agent says what the original rig was and how sure it is, what "
+      "it set and why, and what's only an approximation.\n\n"
+      "Verse: as set.\nChorus: stomp on the overdrive.\nSolo: stomp on the boost.");
+  answer.sources.push_back({"Example rig rundown", "https://example.com/rundown"});
+  answer.sources.push_back({"Example interview", "https://example.com/interview"});
+  answer.before = std::make_shared<juce::XmlElement>("Preset");
+  chat.push_back(std::move(answer));
+  chat.push_back(entry(Entry::Kind::user, "Make it creamier."));
+  chat.push_back(entry(Entry::Kind::error,
+                       "Claude says the rate limit or credit has run out."));
+  processor.getAgent().showForSnapshot(std::move(chat));
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("agent-chat.png"), 1.5f) && ok;
 
   editor.reset();
   processor.releaseResources();

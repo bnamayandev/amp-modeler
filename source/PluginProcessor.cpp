@@ -26,7 +26,14 @@ EvilAmplifierProcessor::EvilAmplifierProcessor()
             return PresetManager::Sources{getModels().getRequestedSource(),
                                           getCab().getSource()};
           },
-          [this](const PresetManager::Sources &s) { applySources(s); }) {
+          [this](const PresetManager::Sources &s) { applySources(s); }),
+      agentAmp(state, getModels(), getCab(), presets,
+               [this](const juce::String &source, juce::String &error) {
+                 return loadIr(source, error);
+               }),
+      agentSession(agentAmp, agentSettings.get(),
+                   std::make_unique<agent::WebHttpClient>()) {
+  agentSession.setLogger([this](const juce::String &line) { log(line); });
   if (wrapperType == wrapperType_Standalone)
     standalone::prepareAudioDevices(); // the audio device opens after this
   ModelManager::enableFastTanh(); // before any model is built

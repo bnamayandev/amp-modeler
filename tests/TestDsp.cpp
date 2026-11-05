@@ -117,27 +117,37 @@ TEST_CASE("EQ bands hit their target gains and flat EQ is exact", "[eq]") {
   CHECK(y == original);
 }
 
-TEST_CASE("EQ bands combine as their filters predict and glide back to flat",
-          "[eq]") {
+TEST_CASE("A fader's number is the change in dB at its band, whatever its "
+          "neighbours are doing, and it glides back to flat", "[eq]") {
+  const auto measure = [](const Equaliser::Gains &gains, double freq, double rate) {
+    Equaliser eq;
+    eq.prepare(rate);
+    auto x = sine(freq, rate, (int)(2.0 * rate), 0.25f);
+    for (size_t start = 0; start < x.size(); start += 128)
+      eq.process(x.data() + start, (int)std::min<size_t>(128, x.size() - start), gains);
+    return juce::Decibels::gainToDecibels(
+        toneAmplitude(x.data() + (int)rate, (int)rate, freq, rate) / 0.25);
+  };
+  const auto check = [&](const Equaliser::Gains &gains, double tolerance) {
+    for (const double rate : {44100.0, 48000.0, 96000.0})
+      for (size_t b = 0; b < gains.size(); ++b) {
+        const double db = measure(gains, Equaliser::frequencies[b], rate);
+        INFO("at " << rate << " Hz, band " << Equaliser::frequencies[b] << " wants "
+                   << gains[b] << " dB, gets " << db);
+        CHECK(std::abs(db - gains[b]) < tolerance);
+      }
+  };
+  // A plain graphic EQ gives +8.7 dB here, with neighbours adding up.
+  check({0.0f, 6.0f, 6.0f, 6.0f, 6.0f, 6.0f, 0.0f, 0.0f, 0.0f}, 0.1);
+  check({0.0f, 0.0f, 0.0f, -6.0f, -6.0f, -6.0f, 0.0f, 0.0f, 0.0f}, 0.1);
+  check({0.0f, 0.0f, 0.0f, 0.0f, 3.0f, 0.0f, 0.0f, 0.0f, 0.0f}, 0.05);
+  // The typical small moves, all over the place.
+  check({-2.0f, 1.0f, -1.5f, 2.0f, -1.0f, 3.0f, 1.0f, -3.0f, 2.0f}, 0.2);
+  // Extremes side by side aren't what it's for, but it stays close.
+  check({6.0f, -3.0f, 0.0f, 4.5f, -10.0f, 2.0f, 0.0f, -6.0f, 9.0f}, 1.3);
+
   const Equaliser::Gains gains{6.0f, -3.0f, 0.0f, 4.5f, -10.0f,
                                2.0f, 0.0f,  -6.0f, 9.0f};
-  for (const double freq : {75.0, 300.0, 800.0, 2400.0, 9000.0}) {
-    double expectedDb = 0.0;
-    for (size_t b = 0; b < gains.size(); ++b)
-      expectedDb += BiquadCoeffs::peak(48000.0, Equaliser::frequencies[b],
-                                       Equaliser::q, gains[b])
-                        .gainDbAt(48000.0, freq);
-    Equaliser eq;
-    eq.prepare(48000.0);
-    auto x = sine(freq, 48000.0, 96000, 0.25f);
-    for (size_t start = 0; start < x.size(); start += 128)
-      eq.process(x.data() + start, 128, gains);
-    const double gainDb = juce::Decibels::gainToDecibels(
-        toneAmplitude(x.data() + 48000, 48000, freq, 48000.0) / 0.25);
-    INFO("freq " << freq << " measured " << gainDb << " expected "
-                 << expectedDb);
-    CHECK(std::abs(gainDb - expectedDb) < 0.1);
-  }
 
   // Whatever the gains, gliding back ends exactly flat: bit-exact again.
   Equaliser eq;

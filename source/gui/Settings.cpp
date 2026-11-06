@@ -33,15 +33,54 @@ void Settings::setAccentHue(float hue) {
   sendChangeMessage();
 }
 
-SettingsPanel::SettingsPanel(Settings &s) : settings(s) {
-  settings.addChangeListener(this);
-  setSize(panelWidth, panelHeight);
+SettingsPanel::SettingsPanel(std::optional<AppActions> app)
+    : hasAppSection(app.has_value()) {
+  settings->addChangeListener(this);
+  if (app.has_value()) {
+    addAction(audioButton, "Interface, inputs, sample rate and buffer size",
+              std::move(app->audioSettings));
+    addAction(saveButton, "Save the amp's whole state to a file",
+              std::move(app->saveState));
+    addAction(loadButton, "Load a state saved to a file",
+              std::move(app->loadState));
+    addAction(resetButton, "Reset the amp to its default state",
+              std::move(app->resetState));
+  }
+  setSize(panelWidth, panelHeight + (hasAppSection ? appSectionHeight : 0));
 }
 
-SettingsPanel::~SettingsPanel() { settings.removeChangeListener(this); }
+SettingsPanel::~SettingsPanel() { settings->removeChangeListener(this); }
+
+void SettingsPanel::addAction(juce::TextButton &button,
+                              const juce::String &tooltip,
+                              std::function<void()> action) {
+  button.setTooltip(tooltip);
+  button.onClick = [this, action = std::move(action)] {
+    if (auto *box = findParentComponentOfClass<juce::CallOutBox>())
+      box->dismiss();
+    juce::MessageManager::callAsync(action); // queued behind the dismissal
+  };
+  addAndMakeVisible(button);
+}
 
 void SettingsPanel::resized() {
   auto b = getLocalBounds().reduced(14, 12);
+  if (hasAppSection) {
+    audioCaption = b.removeFromTop(16);
+    b.removeFromTop(8);
+    audioButton.setBounds(b.removeFromTop(28));
+    b.removeFromTop(14);
+    stateCaption = b.removeFromTop(16);
+    b.removeFromTop(8);
+    auto row = b.removeFromTop(28);
+    const int gap = 6, width = (row.getWidth() - 2 * gap) / 3;
+    saveButton.setBounds(row.removeFromLeft(width));
+    row.removeFromLeft(gap);
+    loadButton.setBounds(row.removeFromLeft(width));
+    row.removeFromLeft(gap);
+    resetButton.setBounds(row);
+    b.removeFromTop(20);
+  }
   caption = b.removeFromTop(16);
   b.removeFromTop(14);
   swatchRow = b.removeFromTop(24);
@@ -62,6 +101,13 @@ void SettingsPanel::paint(juce::Graphics &g) {
 
   g.setFont(gui::caption());
   g.setColour(muted);
+  if (hasAppSection) {
+    g.drawText("AUDIO", audioCaption, juce::Justification::centredLeft);
+    g.drawText("STATE", stateCaption, juce::Justification::centredLeft);
+    g.setColour(line);
+    g.fillRect(caption.withY(caption.getY() - 10).withHeight(1));
+    g.setColour(muted);
+  }
   g.drawText("ACCENT", caption, juce::Justification::centredLeft);
   g.setFont(mono(11.5f));
   g.setColour(textSoft);
@@ -106,7 +152,7 @@ void SettingsPanel::mouseDown(const juce::MouseEvent &e) {
   }
   for (size_t i = 0; i < swatchHues.size(); ++i)
     if (swatch(i).expanded(3.0f).contains(e.position)) {
-      settings.setAccentHue(swatchHues[i] / 360.0f);
+      settings->setAccentHue(swatchHues[i] / 360.0f);
       return;
     }
 }
@@ -116,7 +162,7 @@ void SettingsPanel::mouseDrag(const juce::MouseEvent &e) {
     return;
   const auto strip = hueStrip.toFloat();
   // Stop just short of 1, which would wrap round to the strip's left end.
-  settings.setAccentHue(juce::jlimit(
+  settings->setAccentHue(juce::jlimit(
       0.0f, 0.999f, (e.position.x - strip.getX()) / strip.getWidth()));
 }
 

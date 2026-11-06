@@ -4,6 +4,11 @@
 #include <juce_dsp/juce_dsp.h>
 
 namespace evil::gui {
+/** Has a slider ignore typed text with no number in it, which its parameter would
+    read as 0: clearing the box shouldn't put an output at 0 dB. Call once the
+    slider is attached. */
+void ignoreTextWithoutNumber(juce::Slider &);
+
 /** Rotary knob attached to a parameter, with its name above and value below. */
 class Knob final : public juce::Component {
 public:

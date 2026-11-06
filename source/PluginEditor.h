@@ -30,12 +30,24 @@ private:
     explicit Canvas(EvilAmplifierEditor &e) : owner(e) {}
     void paint(juce::Graphics &g) override { owner.paintCanvas(g); }
     void resized() override { owner.layoutCanvas(); }
+    void mouseDown(const juce::MouseEvent &e) override {
+      owner.canvasMouseDown(e);
+    }
+    void mouseDrag(const juce::MouseEvent &e) override {
+      owner.canvasMouseDrag(e);
+    }
     EvilAmplifierEditor &owner;
   };
 
   void paintCanvas(juce::Graphics &);
   void paintFooter(juce::Graphics &);
   void layoutCanvas();
+  void canvasMouseDown(const juce::MouseEvent &);
+  void canvasMouseDrag(const juce::MouseEvent &);
+  bool isStandalone() const {
+    return audioProcessor.wrapperType ==
+           juce::AudioProcessor::wrapperType_Standalone;
+  }
 
   void timerCallback() override;
   void changeListenerCallback(juce::ChangeBroadcaster *) override;
@@ -70,6 +82,12 @@ private:
   juce::ComboBox presetBox;
   juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"save"};
   juce::TextButton settingsButton{"settings"};
+
+  // The standalone app's window has no title bar: the header stands in for it.
+  juce::TextButton minimiseButton{"-"},
+      closeButton{juce::String::charToString(0x00d7)};
+  juce::ComponentDragger windowDragger;
+  bool draggingWindow = false;
 
   // Pages: the amp controls live on ampPage (laid out in canvas coordinates),
   // the pedals on the board.

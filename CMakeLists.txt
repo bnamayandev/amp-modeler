@@ -134,13 +134,16 @@ target_sources(EvilAmplifier PRIVATE
     source/PluginProcessor.cpp
     source/PluginEditor.cpp
     source/PipeWireJack.cpp
+    source/StandaloneApp.cpp
     source/gui/AgentPage.cpp
     source/gui/EvilLookAndFeel.cpp
     source/gui/PedalBoard.cpp
     source/gui/Settings.cpp
     source/gui/TunerPage.cpp
     source/gui/Widgets.cpp)
-target_compile_definitions(EvilAmplifier PUBLIC ${EVIL_JUCE_DEFINITIONS})
+target_compile_definitions(EvilAmplifier PUBLIC
+    ${EVIL_JUCE_DEFINITIONS}
+    JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1) # source/StandaloneApp.cpp: no title bar
 target_link_libraries(EvilAmplifier
     PRIVATE
         evil_core
@@ -174,6 +177,7 @@ if(EVIL_BUILD_TOOLS)
         source/PluginProcessor.cpp
         source/PluginEditor.cpp
         source/PipeWireJack.cpp
+        source/StandaloneApp.cpp
         source/gui/AgentPage.cpp
         source/gui/EvilLookAndFeel.cpp
         source/gui/PedalBoard.cpp

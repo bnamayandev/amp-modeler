@@ -57,6 +57,9 @@ plugin where your DAW looks:
   speakers) and shows a yellow banner. Click its **Settings...** button, pick your interface,
   set the buffer to 128 samples, enable the input your guitar is plugged into, and untick
   **Mute audio input**. Use headphones or monitors, not laptop speakers next to a pickup.
+  The same dialog stays under **settings** in the header, with saving, loading and resetting
+  the app's state. The window has no title bar: drag it by the header, and minimise or quit
+  with the buttons at the header's right.
 - **Linux standalone on PipeWire**: pick **JACK** in Settings (no `pw-jack` needed). Its sample
   rate and buffer size menus set PipeWire's graph while the app runs, and PipeWire goes back to
   its defaults when the app quits. Round-trip delay on a USB interface is about 4x the buffer:

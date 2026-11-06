@@ -475,7 +475,27 @@ juce::Label *EvilLookAndFeel::createSliderTextBox(juce::Slider &slider) {
                    juce::Colours::transparentBlack);
   label->setColour(juce::Label::backgroundColourId,
                    juce::Colours::transparentBlack);
-  label->setColour(juce::Label::outlineWhenEditingColourId, colours::accent());
+  // Typing happens in place: the same text in the same spot, on a tint like the
+  // pedal name tags, or on the bar a bar slider already draws. JUCE's default fill
+  // is the transparent colour made opaque.
+  label->setColour(juce::Label::textWhenEditingColourId, colours::text);
+  label->setColour(juce::Label::backgroundWhenEditingColourId,
+                   slider.isBar() ? juce::Colours::transparentBlack : tint(0.18f));
+  label->setColour(juce::Label::outlineWhenEditingColourId,
+                   juce::Colours::transparentBlack);
+  label->onEditorShow = [label] {
+    auto *editor = label->getCurrentTextEditor();
+    if (editor == nullptr)
+      return;
+    // JUCE fills the editor while it's 10 pixels wide, which leaves the text
+    // scrolled to the left. Undo that first: once centred, the caret at the start
+    // is already in view and wouldn't scroll back. No top indent, as it would push
+    // the text below the middle of a box this short.
+    editor->setCaretPosition(0);
+    editor->setIndents(editor->getLeftIndent(), 0);
+    editor->setJustification(label->getJustificationType());
+    editor->selectAll();
+  };
   return label;
 }
 } // namespace evil::gui

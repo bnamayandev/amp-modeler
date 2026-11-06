@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 
+#include "StandaloneApp.h"
+
 namespace evil {
 namespace {
 void styleLabel(juce::Label &label, const juce::Font &font,
@@ -64,7 +66,17 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   refreshPresetList();
   canvas.addAndMakeVisible(settingsButton);
   settingsButton.onClick = [this] { showSettings(); };
-  settingsButton.setTooltip("Accent colour, for every instance");
+  settingsButton.setTooltip(isStandalone()
+                                ? "Audio device, saved states and accent colour"
+                                : "Accent colour, for every instance");
+  if (isStandalone()) {
+    canvas.addAndMakeVisible(minimiseButton);
+    canvas.addAndMakeVisible(closeButton);
+    minimiseButton.onClick = [] { standalone::minimiseWindow(); };
+    closeButton.onClick = [] { standalone::closeWindow(); };
+    minimiseButton.setTooltip("Minimise");
+    closeButton.setTooltip("Quit");
+  }
 
   // Input
   for (auto *c : std::initializer_list<juce::Component *>{
@@ -127,6 +139,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
       "Tap the tempo; each tap also restarts the bar on the beat");
   for (auto *slider : {&bpmSlider, &metronomeLevelSlider}) {
     slider->setSliderSnapsToMousePosition(false);
+    gui::ignoreTextWithoutNumber(*slider);
     canvas.addAndMakeVisible(slider);
   }
   bpmSlider.setTooltip("Tempo (drag, or double-click to type)");
@@ -190,7 +203,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   // standalone's window manager may impose any size (tiling, maximise, snap);
   // the constrainer would then shrink the editor inside the bigger window and
   // leave it unpainted. resized() letterboxes, so any size works there.
-  if (p.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+  if (!isStandalone())
     getConstrainer()->setFixedAspectRatio((double)designWidth / designHeight);
   setSize(designWidth, designHeight);
   startTimerHz(30);
@@ -292,12 +305,18 @@ void EvilAmplifierEditor::layoutCanvas() {
   header = header.withSizeKeepingCentre(header.getWidth(), 30);
   prevPreset.setBounds(header.removeFromLeft(30));
   header.removeFromLeft(6);
-  presetBox.setBounds(header.removeFromLeft(196));
+  presetBox.setBounds(header.removeFromLeft(isStandalone() ? 156 : 196));
   header.removeFromLeft(6);
   nextPreset.setBounds(header.removeFromLeft(30));
   header.removeFromLeft(12);
   savePreset.setBounds(header.removeFromLeft(70));
-  settingsButton.setBounds(header.removeFromRight(84));
+  if (isStandalone()) {
+    closeButton.setBounds(header.removeFromRight(24));
+    header.removeFromRight(2);
+    minimiseButton.setBounds(header.removeFromRight(24));
+    header.removeFromRight(8);
+  }
+  settingsButton.setBounds(header.removeFromRight(isStandalone() ? 72 : 84));
 
   // Footer: metronome on the left; transposer and stats on the right.
   {
@@ -408,6 +427,18 @@ void EvilAmplifierEditor::layoutCanvas() {
     b.removeFromRight(8);
     outputKnob.setBounds(b);
   }
+}
+
+void EvilAmplifierEditor::canvasMouseDown(const juce::MouseEvent &e) {
+  // Bare header in the standalone app drags the window, as a title bar would.
+  draggingWindow = isStandalone() && e.y < headerHeight;
+  if (draggingWindow)
+    windowDragger.startDraggingComponent(getTopLevelComponent(), e);
+}
+
+void EvilAmplifierEditor::canvasMouseDrag(const juce::MouseEvent &e) {
+  if (draggingWindow)
+    windowDragger.dragComponent(getTopLevelComponent(), e, nullptr);
 }
 
 void EvilAmplifierEditor::paintFooter(juce::Graphics &g) {
@@ -579,7 +610,7 @@ void EvilAmplifierEditor::changeListenerCallback(
 
 void EvilAmplifierEditor::applyAccent() {
   lookAndFeel.refreshAccent();
-  sendLookAndFeelChange(); // slider value boxes take the new edit outline
+  sendLookAndFeelChange(); // slider value boxes take the new edit tint
   // Labels coloured by state.
   transposeAttachment->sendInitialUpdate();
   refreshModelStatus();
@@ -731,8 +762,13 @@ void EvilAmplifierEditor::showBuiltinIrs() {
 }
 
 void EvilAmplifierEditor::showSettings() {
+  std::optional<gui::SettingsPanel::AppActions> app;
+  if (isStandalone())
+    app = gui::SettingsPanel::AppActions{
+        standalone::showAudioSettings, standalone::saveState,
+        standalone::loadState, standalone::resetToDefaultState};
   juce::CallOutBox::launchAsynchronously(
-      std::make_unique<gui::SettingsPanel>(*settings),
+      std::make_unique<gui::SettingsPanel>(std::move(app)),
       settingsButton.getBounds(), &canvas);
 }
 

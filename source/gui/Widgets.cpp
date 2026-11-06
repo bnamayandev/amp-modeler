@@ -3,6 +3,13 @@
 #include "EvilLookAndFeel.h"
 
 namespace evil::gui {
+void ignoreTextWithoutNumber(juce::Slider &slider) {
+  slider.valueFromTextFunction = [&slider, parse = slider.valueFromTextFunction](
+                                     const juce::String &text) {
+    return text.containsAnyOf("0123456789") ? parse(text) : slider.getValue();
+  };
+}
+
 Knob::Knob(juce::AudioProcessorValueTreeState &state,
            const juce::String &parameterId, const juce::String &titleText)
     : slider(juce::Slider::RotaryHorizontalVerticalDrag,
@@ -25,6 +32,7 @@ Knob::Knob(juce::AudioProcessorValueTreeState &state,
     slider.setDoubleClickReturnValue(true,
                                      p->convertFrom0to1(p->getDefaultValue()));
   slider.setTooltip(titleText + " (double-click to reset)");
+  ignoreTextWithoutNumber(slider);
   addAndMakeVisible(slider);
 }
 
@@ -35,8 +43,9 @@ void Knob::resized() {
   constexpr int textHeight = 20, maxDiameter = 104;
   const int diameter =
       juce::jmin(b.getWidth(), b.getHeight() - textHeight, maxDiameter);
-  slider.setBounds(
-      b.withSizeKeepingCentre(juce::jmax(diameter, 84), diameter + textHeight));
+  // No wider than this component, which would cut off the sides of the value box.
+  slider.setBounds(b.withSizeKeepingCentre(
+      juce::jmin(b.getWidth(), juce::jmax(diameter, 84)), diameter + textHeight));
 }
 
 Fader::Fader(juce::AudioProcessorValueTreeState &state,

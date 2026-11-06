@@ -903,6 +903,41 @@ struct ParameterHost final : juce::AudioProcessor {
 };
 } // namespace
 
+TEST_CASE("Typing a value into a knob sets what it shows", "[pedals]") {
+  ParameterHost host;
+  const auto typed = [&host](const char *id, const juce::String &text) {
+    auto *p = host.state.getParameter(id);
+    return p->convertFrom0to1(p->getValueForText(text));
+  };
+  // Shown 0-10, stored 0-1: 3.5 used to clamp to the top and read 10.0.
+  CHECK(typed(params::odDrive, "3.5") == Catch::Approx(0.35f));
+  CHECK(typed(params::odDrive, "0.5") == Catch::Approx(0.05f));
+  CHECK(typed(params::odDrive, "10") == 1.0f);
+  CHECK(typed(params::odDrive, "11") == 1.0f);
+  CHECK(typed(params::odDrive, "-1") == 0.0f);
+  // The Filter's reading runs against what it stores.
+  CHECK(typed(params::distTone, "3.5") == Catch::Approx(0.65f));
+  // Shown as percent, stored 0-1, with or without the sign.
+  CHECK(typed(params::compBlend, "35%") == Catch::Approx(0.35f));
+  CHECK(typed(params::compBlend, "35") == Catch::Approx(0.35f));
+  CHECK(typed(params::delayFeedback, "100%") == Catch::Approx(0.95f));
+  // Shown and stored the same, including on the knobs with a pot's taper.
+  CHECK(typed(params::input, "-3.5 dB") == Catch::Approx(-3.5f));
+  CHECK(typed(params::input, "+3.5") == Catch::Approx(3.5f));
+  CHECK(typed(params::odLevel, "-6.5") == Catch::Approx(-6.5f).margin(0.01f));
+  CHECK(typed(params::boostGain, "12.5 dB") == Catch::Approx(12.5f).margin(0.01f));
+  CHECK(typed(params::phaserRate, "1.25 Hz") == Catch::Approx(1.25f).margin(0.01f));
+  CHECK(typed(params::delayTime, "250.5 ms") == Catch::Approx(250.5f).margin(0.01f));
+
+  // Whatever any parameter shows, typing it back leaves it showing the same.
+  for (auto *p : host.getParameters())
+    for (const float position : {0.0f, 0.1f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f}) {
+      const auto shown = p->getText(position, 0);
+      INFO(p->getName(64).toStdString() << " showing " << shown.toStdString());
+      CHECK(p->getText(p->getValueForText(shown), 0) == shown);
+    }
+}
+
 TEST_CASE("A knob's pointer is where the real pedal's would be", "[pedals]") {
   ParameterHost host;
   const auto valueAt = [&host](const char *id, float position) {

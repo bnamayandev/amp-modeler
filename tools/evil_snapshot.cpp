@@ -6,12 +6,15 @@
 // Writes editor.png (default size), editor@1.5x.png, stretched.png, which
 // simulates a window manager forcing the window to an odd size, to check the
 // layout scales uniformly, pedals.png: the pedal page with a few pedals on,
-// tuner-idle.png, tuner.png, tuner-in-tune.png and tuner-locked.png: the tuner
+// editor-typing.png and pedals-typing.png: those pages with every value box open
+// for typing, tuner-idle.png, tuner.png, tuner-in-tune.png and tuner-locked.png: the tuner
 // page with a custom tuning, hearing notes played into the processor, and
-// settings.png: the settings popover open, with a blue accent, and agent-keys.png,
-// agent-sign-in.png, agent-empty.png and agent-chat.png: the agent tab, with made-up keys and a
-// made-up conversation. The saved accent, tuning and keys are ignored, so every
-// shot starts from the default and none can show a real key.
+// settings.png: the settings popover open, with a blue accent, app.png and
+// app-settings.png: the header and the popover as the standalone app has them,
+// and agent-keys.png, agent-sign-in.png, agent-empty.png and agent-chat.png: the
+// agent tab, with made-up keys and a made-up conversation. The saved accent,
+// tuning and keys are ignored, so every shot starts from the default and none
+// can show a real key.
 
 #include "PluginEditor.h"
 
@@ -48,6 +51,29 @@ template <typename Type> Type *findChild(juce::Component &root) {
       return found;
   }
   return nullptr;
+}
+
+template <typename Type>
+void findAll(juce::Component &root, std::vector<Type *> &found) {
+  for (auto *child : root.getChildren()) {
+    if (auto *c = dynamic_cast<Type *>(child))
+      found.push_back(c);
+    findAll(*child, found);
+  }
+}
+
+/** Saves a shot with every value box on the page open for typing. */
+bool saveTyping(juce::Component &page, const juce::File &file) {
+  std::vector<juce::Slider *> sliders;
+  findAll(page, sliders);
+  for (auto *slider : sliders)
+    if (slider->getTextBoxPosition() != juce::Slider::NoTextBox)
+      slider->showTextBox();
+  const bool ok = save(page, file, 1.5f);
+  for (auto *slider : sliders)
+    if (slider->getTextBoxPosition() != juce::Slider::NoTextBox)
+      slider->hideTextBox(true);
+  return ok;
 }
 
 /** Plays a plucked note through the processor and hands what comes out of its
@@ -113,6 +139,7 @@ int main(int argc, char **argv) {
 
   bool ok = save(*editor, dir.getChildFile("editor.png"), 1.0f);
   ok = save(*editor, dir.getChildFile("editor@1.5x.png"), 1.5f) && ok;
+  ok = saveTyping(*editor, dir.getChildFile("editor-typing.png")) && ok;
 
   editor->setBoundsConstrained({0, 0, 940, 970}); // what the window manager did
   std::cout << "asked for 940x970, constrained to " << editor->getWidth() << "x"
@@ -130,6 +157,7 @@ int main(int argc, char **argv) {
   processor.editorPage = 1;
   editor.reset(processor.createEditor());
   ok = save(*editor, dir.getChildFile("pedals.png"), 1.5f) && ok;
+  ok = saveTyping(*editor, dir.getChildFile("pedals-typing.png")) && ok;
 
   // The transposer is still on from above: the tuner must not hear it. Not
   // a custom tuning saved to the library, which would overwrite the player's.
@@ -163,7 +191,7 @@ int main(int argc, char **argv) {
   processor.editorPage = 0;
   editor.reset(processor.createEditor());
   if (auto *button = findButton(*editor, "settings")) {
-    evil::gui::SettingsPanel panel(*settings);
+    evil::gui::SettingsPanel panel;
     juce::CallOutBox box(panel, button->getBounds(),
                          button->getParentComponent());
     ok = save(*editor, dir.getChildFile("settings.png"), 1.5f) && ok;
@@ -174,6 +202,34 @@ int main(int argc, char **argv) {
 
   evil::gui::colours::setAccentHue(evil::gui::colours::defaultAccentHue);
   editor.reset();
+  {
+    // The app is the same editor on a processor that knows it's in the app.
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Standalone);
+    evil::EvilAmplifierProcessor app;
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Undefined);
+    app.prepareToPlay(48000.0, 128);
+    for (int i = 0; i < 500 && app.getModels().getStatus().state !=
+                                   evil::ModelManager::State::ready;
+         ++i)
+      juce::Thread::sleep(10);
+
+    std::unique_ptr<juce::AudioProcessorEditor> appEditor(app.createEditor());
+    ok = save(*appEditor, dir.getChildFile("app.png"), 1.5f) && ok;
+    if (auto *button = findButton(*appEditor, "settings")) {
+      evil::gui::SettingsPanel panel(evil::gui::SettingsPanel::AppActions{});
+      juce::CallOutBox box(panel, button->getBounds(),
+                           button->getParentComponent());
+      ok = save(*appEditor, dir.getChildFile("app-settings.png"), 1.5f) && ok;
+    } else {
+      std::cout << "FAILED: no settings button in the app" << std::endl;
+      ok = false;
+    }
+    appEditor.reset();
+    app.releaseResources();
+  }
+
   processor.editorPage = 3;
   editor.reset(processor.createEditor()); // no key yet: opens on the keys
   ok = save(*editor, dir.getChildFile("agent-keys.png"), 1.5f) && ok;

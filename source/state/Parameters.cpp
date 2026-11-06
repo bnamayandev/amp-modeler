@@ -50,10 +50,14 @@ juce::NormalisableRange<float> levelPot(const analog::LevelKnob &pot) {
           }};
 }
 
-/** Unitless pedal knob shown 0-10. */
+/** Unitless pedal knob shown 0-10. It reads typed text the same way: left to JUCE,
+   a typed 3.5 is the stored value, which clamps to the top of 0-1. */
 juce::AudioParameterFloatAttributes zeroToTen() {
-  return juce::AudioParameterFloatAttributes().withStringFromValueFunction(
-      [](float v, int) { return juce::String(v * 10.0f, 1); });
+  return juce::AudioParameterFloatAttributes()
+      .withStringFromValueFunction(
+          [](float v, int) { return juce::String(v * 10.0f, 1); })
+      .withValueFromStringFunction(
+          [](const juce::String &text) { return text.getFloatValue() / 10.0f; });
 }
 
 juce::AudioParameterFloatAttributes hertz() {
@@ -62,8 +66,12 @@ juce::AudioParameterFloatAttributes hertz() {
 }
 
 juce::AudioParameterFloatAttributes percent() {
-  return juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction(
-      [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; });
+  return juce::AudioParameterFloatAttributes()
+      .withLabel("%")
+      .withStringFromValueFunction(
+          [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; })
+      .withValueFromStringFunction(
+          [](const juce::String &text) { return text.getFloatValue() / 100.0f; });
 }
 
 void addUnit(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
@@ -161,8 +169,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
             return juce::jlimit(0.0f, 1.0f, std::round(v * 1000.0f) / 1000.0f);
           }),
       0.5f,
-      juce::AudioParameterFloatAttributes().withStringFromValueFunction(
-          [](float v, int) { return juce::String((1.0f - v) * 10.0f, 1); })));
+      juce::AudioParameterFloatAttributes()
+          .withStringFromValueFunction(
+              [](float v, int) { return juce::String((1.0f - v) * 10.0f, 1); })
+          .withValueFromStringFunction([](const juce::String &text) {
+            return 1.0f - text.getFloatValue() / 10.0f;
+          })));
   addLevel(layout, distLevel, "Dist Volume", analog::distortionVolume);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{boostOn, 1}, "Boost", false));

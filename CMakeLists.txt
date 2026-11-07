@@ -90,8 +90,6 @@ target_sources(evil_core INTERFACE
     source/dsp/ReverbPedal.cpp
     source/dsp/SignalChain.cpp
     source/dsp/StreamingResampler.cpp
-    source/record/Mp4Writer.cpp
-    source/record/Recorder.cpp
     source/state/Parameters.cpp
     source/state/PresetManager.cpp
     source/state/Tunings.cpp)
@@ -101,7 +99,6 @@ target_link_libraries(evil_core INTERFACE
     # an otherwise unreferenced object file; a plain static link would drop them.
     "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>"
     EvilAmplifierData
-    faac_core
     juce::juce_audio_utils
     juce::juce_cryptography # SHA-256 for the TONE3000 sign-in
     juce::juce_dsp)

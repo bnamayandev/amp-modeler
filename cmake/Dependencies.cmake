@@ -26,15 +26,7 @@ FetchContent_Declare(Eigen
     SOURCE_SUBDIR do-not-add-subdirectory
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
 
-# The AAC encoder behind recording to .mp4. Download only, like NAM Core: its build is Meson,
-# so faac_core below compiles its sources.
-FetchContent_Declare(faac
-    GIT_REPOSITORY https://github.com/FreewareAdvancedAudio/faac.git
-    GIT_TAG faac-2.2
-    GIT_SHALLOW TRUE
-    SOURCE_SUBDIR do-not-add-subdirectory)
-
-FetchContent_MakeAvailable(JUCE NeuralAmpModelerCore Eigen faac)
+FetchContent_MakeAvailable(JUCE NeuralAmpModelerCore Eigen)
 
 if(EVIL_BUILD_TESTS)
     FetchContent_Declare(Catch2
@@ -66,33 +58,4 @@ if(MSVC)
 else()
     # Upstream code is not warning-clean under our flags; it is third-party, so silence it.
     target_compile_options(nam_core PRIVATE -w "$<$<NOT:$<CONFIG:Debug>>:-O3>")
-endif()
-
-# --- faac_core: FAAC's encoder as a static library -----------------------------------------
-file(GLOB FAAC_SOURCES CONFIGURE_DEPENDS "${faac_SOURCE_DIR}/libfaac/*.c")
-# The scalar quantizer is plenty on a background thread, and a universal macOS build can't
-# have an x86-only file in it.
-list(FILTER FAAC_SOURCES EXCLUDE REGEX "quantize_sse\\.c$")
-
-add_library(faac_core STATIC ${FAAC_SOURCES})
-target_include_directories(faac_core SYSTEM PUBLIC "${faac_SOURCE_DIR}/include")
-target_include_directories(faac_core PRIVATE "${faac_SOURCE_DIR}/libfaac")
-target_compile_definitions(faac_core
-    PUBLIC
-        FAACAPI= # linked statically: nothing to export from the plugin
-    PRIVATE
-        PACKAGE_VERSION="2.2.0"
-        MAX_CHANNELS=2
-        FAAC_SBR_DECIMATION=1)
-set_target_properties(faac_core PROPERTIES
-    C_STANDARD 11
-    C_VISIBILITY_PRESET hidden
-    POSITION_INDEPENDENT_CODE ON)
-
-if(MSVC)
-    target_compile_definitions(faac_core PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_compile_options(faac_core PRIVATE /W0 "$<$<NOT:$<CONFIG:Debug>>:/O2>")
-else()
-    target_compile_options(faac_core PRIVATE -w "$<$<NOT:$<CONFIG:Debug>>:-O3>")
-    target_link_libraries(faac_core PRIVATE m)
 endif()

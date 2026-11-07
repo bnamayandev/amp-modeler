@@ -13,9 +13,7 @@
 // page with a custom tuning, hearing notes played into the processor, and
 // settings.png: the settings popover open, with a blue accent, app.png and
 // app-settings.png: the header and the popover as the standalone app has them,
-// recording.png, recording-long.png and recording-saved.png: the record key during a
-// take and after it, with recording.mp4, that take through the whole processor, and
-// agent-keys.png, agent-sign-in.png, agent-empty.png and agent-chat.png: the
+// and agent-keys.png, agent-sign-in.png, agent-empty.png and agent-chat.png: the
 // agent tab, with made-up keys and a made-up conversation. The saved accent,
 // tuning and keys are ignored, so every shot starts from the default and none
 // can show a real key.
@@ -173,65 +171,6 @@ void playNote(evil::EvilAmplifierProcessor &processor,
     tuner.refresh(rate, 1.0f / 30.0f);
   }
 }
-
-/** Records a few plucked notes through the whole processor, into the output
-    folder and not the player's Downloads, then saves the key during and after. */
-bool saveRecording(std::unique_ptr<juce::AudioProcessorEditor> &editor,
-                   evil::EvilAmplifierProcessor &processor, const juce::File &dir) {
-  constexpr double rate = 48000.0;
-  constexpr int block = 128, blocks = 4500; // 12 s
-  auto &recorder = processor.getRecorder();
-  juce::String error;
-  if (!recorder.start(dir, rate, error)) {
-    std::cout << "FAILED: couldn't record: " << error << std::endl;
-    return false;
-  }
-
-  juce::AudioBuffer<float> buffer(2, block);
-  juce::MidiBuffer midi;
-  int position = 0;
-  for (int b = 0; b < blocks; ++b) {
-    buffer.clear();
-    auto *in = buffer.getWritePointer(0);
-    for (int i = 0; i < block; ++i, ++position) {
-      const double t = position / rate, sinceNote = std::fmod(t, 1.5);
-      const double hz = 82.41 * std::pow(2.0, std::floor(t / 1.5) * 5.0 / 12.0);
-      for (int k = 1; k <= 8; ++k)
-        in[i] += (float)(0.25 / k * std::exp(-1.5 * k * sinceNote) *
-                         std::sin(juce::MathConstants<double>::twoPi * hz * k * sinceNote));
-    }
-    processor.processBlock(buffer, midi);
-  }
-
-  editor.reset(processor.createEditor());
-  bool ok = save(*editor, dir.getChildFile("recording.png"), 1.5f);
-  if (auto *key = findChild<evil::gui::RecordButton>(*editor)) {
-    key->showRecording(12.0 * 3600.0 + 34.0 * 60.0 + 56.0); // the widest it gets
-    ok = save(*editor, dir.getChildFile("recording-long.png"), 1.5f) && ok;
-  }
-
-  // Stopped with no editor open, as it could be: the next editor hears how it went.
-  editor.reset();
-  recorder.stop();
-  juce::Array<juce::File> takes;
-  dir.findChildFiles(takes, juce::File::findFiles, false, "Evil Amplifier *.mp4");
-  editor.reset(processor.createEditor());
-  ok = save(*editor, dir.getChildFile("recording-saved.png"), 1.5f) && ok;
-  editor.reset();
-
-  if (takes.size() != 1) {
-    std::cout << "FAILED: " << takes.size() << " takes where one should be" << std::endl;
-    return false;
-  }
-  const auto file = dir.getChildFile("recording.mp4");
-  if (!takes[0].moveFileTo(file)) {
-    std::cout << "FAILED: couldn't move the take" << std::endl;
-    return false;
-  }
-  std::cout << "wrote " << file.getFullPathName() << " (" << file.getSize() / 1024
-            << " KB)" << std::endl;
-  return ok;
-}
 } // namespace
 
 int main(int argc, char **argv) {
@@ -276,7 +215,6 @@ int main(int argc, char **argv) {
   ok = save(*editor, dir.getChildFile("stretched.png"), 1.0f) && ok;
 
   editor.reset();
-  ok = saveRecording(editor, processor, dir) && ok;
 
   for (auto *id : {evil::params::wahOn, evil::params::odOn,
                    evil::params::phaserOn, evil::params::delayOn,

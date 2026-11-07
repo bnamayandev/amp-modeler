@@ -111,23 +111,6 @@ private:
   PaintCache graticule;
 };
 
-/** The record key: a red light, and beside it the take's length while it runs. */
-class RecordButton final : public juce::TextButton {
-public:
-  RecordButton() : juce::TextButton("rec") {}
-
-  void showRecording(double seconds);
-  void showIdle(const char *label);
-
-  /** While recording, says what a click does now rather than the set tooltip. */
-  juce::String getTooltip() override;
-  void paintButton(juce::Graphics &, bool highlighted, bool down) override;
-
-private:
-  bool recording = false;
-  int shownSeconds = -1;
-};
-
 /** A chrome stomp switch in its hex nut. Its toggle state is the pedal's on/off. */
 class Footswitch final : public juce::Button {
 public:

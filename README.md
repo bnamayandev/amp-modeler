@@ -132,12 +132,6 @@ plugin where your DAW looks:
 - **Metronome** (bottom left): start/stop, tempo (drag, or double-click to type), **tap**
   (each tap also restarts the bar), beats per bar (beat one clicks higher) and level. The
   click is mixed into the output. It always starts stopped.
-- **Record** (the **rec** key, top right): one click starts a take, and the light comes on with
-  the time so far; another click saves it to your Downloads folder as
-  `Evil Amplifier <date> <time>.mp4`. It's what comes out of the amp, pedals and all, without
-  the metronome: mono AAC at 192 kbps (about 1.4 MB a minute), audio only. A take keeps going if
-  you close the plugin window, and quitting saves it. Until it's saved the file ends in
-  `.mp4.part` and won't play, so a crash loses that take.
 - **Presets**: nine factory presets (also exposed as host programs). **Save** writes user
   presets to `~/.config/EvilAmplifier/Presets` (Linux), `~/Library/EvilAmplifier/Presets`
   (macOS) or `%APPDATA%\EvilAmplifier\Presets` (Windows). Presets
@@ -426,7 +420,6 @@ source/dsp/        SignalChain, ModelManager, NamModelRunner, StreamingResampler
                    Equaliser, NoiseGate, Biquad, Pedals, AnalogStages, ReverbPedal, PitchShifter,
                    PitchDetector, Metronome, DelayLine
 source/state/      parameters, presets, tunings
-source/record/     Recorder (audio thread to disk), Mp4Writer (AAC in MP4)
 source/gui/        look and feel, knobs, meters, pedal board, tuner page, agent page
 source/agent/      the chat: LLM providers, tools and their limits, TONE3000, HTTPS, saved keys
 source/            PluginProcessor, PluginEditor

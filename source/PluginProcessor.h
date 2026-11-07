@@ -4,7 +4,6 @@
 #include "agent/Session.h"
 #include "dsp/SampleTap.h"
 #include "dsp/SignalChain.h"
-#include "record/Recorder.h"
 #include "state/Parameters.h"
 #include "state/PresetManager.h"
 
@@ -101,9 +100,6 @@ public:
       string itself. */
   using TunerTap = SampleTap<32768>;
   TunerTap &getTunerTap() noexcept { return tunerTap; }
-  /** Hears the amp's output without the metronome: the click is only for the
-      player. It outlives the editor, so closing the window doesn't end a take. */
-  Recorder &getRecorder() noexcept { return recorder; }
 
   // Metronome: whether it runs is not saved, so a session never opens clicking.
   bool isMetronomeRunning() const noexcept { return metronomeRunning.load(); }
@@ -140,7 +136,6 @@ private:
   std::atomic<float> inputPeak{0.0f}, outputPeak{0.0f};
   AnalyserTap analyserTap;
   TunerTap tunerTap;
-  Recorder recorder;
 
   double currentSampleRate = 0.0;
   std::atomic<bool> prepared{false};

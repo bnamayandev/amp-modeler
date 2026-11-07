@@ -10,7 +10,6 @@ target_sources(evil_tests PRIVATE
     TestResampler.cpp
     TestNam.cpp
     TestRealtime.cpp
-    TestRecording.cpp
     TestTuner.cpp)
 
 target_compile_definitions(evil_tests PRIVATE

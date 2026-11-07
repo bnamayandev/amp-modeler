@@ -10,4 +10,7 @@ and pick JACK in Settings for the lowest latency (needs the pipewire-jack packag
 ALSA also works. Click "Settings..." on the yellow banner: choose your interface, enable
 only your guitar's input, and untick "Mute audio input".
 
+The agent tab needs libcurl for HTTPS, which most systems already have (on Debian or Ubuntu:
+sudo apt install libcurl4). The rest of the amp runs without it.
+
 Building from source gives you scripts/install-linux.sh, which also adds an app-menu entry.

@@ -5,6 +5,17 @@
 //   prediction.wav] evil-cli bench  [--seconds S] [--block N] [--rate R] [--csv
 //   file] [chain options] evil-cli info   <m.nam> evil-cli devices (audio
 //   device types and devices this build can open)
+//   evil-cli agent  "<message>" ["<next message>" ...] [--provider anthropic|
+//   openai|gemini] [--model M] (talks to the agent with no window, and prints
+//   what it did. Keys come from ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY
+//   and TONE3000_PUBLISHABLE_KEY, else from what the agent tab saved. Spends the
+//   account's money. It never opens a browser: if it needs you to sign in to
+//   TONE3000, it prints a code to enter on any device. --base-url sends model
+//   requests to a local stand-in instead.)
+//   evil-cli measure [chain options] (what the agent's measure_tone reads for this
+//   setup)
+//   evil-cli tone3000 status|connect|disconnect (the TONE3000 sign-in the agent
+//   shares with the amp. connect prints a code to enter on any device.)
 //
 // Chain options:
 //   --model <path|builtin:Name>  --ir <path|builtin:Name>
@@ -19,6 +30,9 @@
 // target. `bench` times every block against its real-time deadline:
 // the numbers the plugin logs.
 
+#include "agent/HeadlessRig.h"
+#include "agent/Session.h"
+#include "agent/ToneMeter.h"
 #include "dsp/SignalChain.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -53,7 +67,7 @@ Options parse(int argc, char **argv) {
   static const juce::StringArray valued{
       "--model",   "--ir",   "--input-db", "--output-db", "--block",
       "--seconds", "--rate", "--csv",      "--out",       "--transpose",
-      "--pedals",  "--set"};
+      "--pedals",  "--set",  "--provider", "--model",     "--base-url"};
   Options o;
   for (int i = 2; i < argc; ++i) {
     const juce::String arg(argv[i]);
@@ -381,12 +395,194 @@ int info(const Options &o) {
 }
 } // namespace
 
+/** Sends each message in turn, printing the transcript as it grows, then stops
+    the message loop the amp's parameter changes run on. */
+class AgentRun final : private juce::Timer {
+public:
+  AgentRun(evil::agent::Session &s, std::vector<juce::String> m)
+      : session(s), messages(std::move(m)) {
+    startTimer(50);
+  }
+  bool hadError = false;
+
+private:
+  void timerCallback() override {
+    using Kind = evil::agent::Session::Entry::Kind;
+    const auto entries = session.getEntries();
+    for (; printed < entries.size(); ++printed) {
+      const auto &entry = entries[printed];
+      const char *prefix = entry.kind == Kind::user        ? "\nyou> "
+                           : entry.kind == Kind::assistant ? "\nagent> "
+                           : entry.kind == Kind::error     ? "\nproblem> "
+                                                           : "  . ";
+      hadError = hadError || entry.kind == Kind::error;
+      std::cout << prefix << entry.text << std::endl;
+      for (const auto &source : entry.sources)
+        std::cout << "      " << source.title << ": " << source.url << std::endl;
+      for (const auto &source : entry.suggestions)
+        std::cout << "      suggestion " << source.title << ": " << source.url
+                  << std::endl;
+    }
+    if (session.isBusy())
+      return;
+    if (next < messages.size()) {
+      session.send(messages[next++]);
+      return;
+    }
+    stopTimer();
+    juce::MessageManager::getInstance()->stopDispatchLoop();
+  }
+
+  evil::agent::Session &session;
+  std::vector<juce::String> messages;
+  size_t printed = 0, next = 0;
+};
+
+int commandAgent(const Options &options) {
+  using evil::agent::AgentSettings;
+  using evil::agent::ProviderId;
+  if (options.positional.empty())
+    fail("usage: evil-cli agent \"<message>\" [--provider P] [--model M]");
+
+  juce::SharedResourcePointer<AgentSettings> settings;
+
+  struct Choice {
+    const char *name;
+    ProviderId id;
+    const char *environment;
+  };
+  const Choice choices[] = {{"anthropic", ProviderId::anthropic, "ANTHROPIC_API_KEY"},
+                            {"openai", ProviderId::openai, "OPENAI_API_KEY"},
+                            {"gemini", ProviderId::gemini, "GEMINI_API_KEY"}};
+  // Nothing here is saved: this run only.
+  for (const auto &choice : choices) {
+    const auto key = juce::SystemStats::getEnvironmentVariable(choice.environment, {});
+    if (key.isNotEmpty())
+      settings->setForThisRun(AgentSettings::apiKeyName(choice.id), key);
+  }
+  const auto toneKey =
+      juce::SystemStats::getEnvironmentVariable("TONE3000_PUBLISHABLE_KEY", {});
+  if (toneKey.isNotEmpty())
+    settings->setForThisRun(AgentSettings::tone3000Key, toneKey);
+  if (options.values.count("--provider") > 0) {
+    bool known = false;
+    for (const auto &choice : choices)
+      if (options.get("--provider") == choice.name) {
+        settings->setForThisRun("provider", choice.name);
+        known = true;
+      }
+    if (!known)
+      fail("--provider is anthropic, openai or gemini");
+  }
+  const auto provider = settings->getProvider();
+  if (options.values.count("--model") > 0)
+    for (const auto &choice : choices)
+      if (choice.id == provider)
+        settings->setForThisRun(juce::String("model_") + choice.name, options.get("--model"));
+  if (options.values.count("--base-url") > 0)
+    settings->setForThisRun(AgentSettings::testBaseUrl, options.get("--base-url"));
+
+  std::cout << "agent: " << AgentSettings::providerName(provider) << ", "
+            << settings->getModel(provider) << std::endl;
+
+  evil::agent::HeadlessRig rig;
+  juce::String error;
+  if (!rig.chain.getModels().loadSynchronously(evil::params::defaultModelSource, error))
+    fail(error);
+  bool hadError = false;
+  {
+    evil::agent::Session session(rig.amp, settings.get(),
+                                 std::make_unique<evil::agent::WebHttpClient>());
+    AgentRun run(session, options.positional);
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    hadError = run.hadError;
+    std::cout << "\n" << evil::agent::describeAmpState(rig.amp) << std::endl;
+    std::cout << session.getLastUsage() << std::endl;
+  }
+  return hadError ? 1 : 0;
+}
+
+int commandMeasure(const Options &options) {
+  const auto model = options.has("--no-model")
+                         ? juce::String()
+                         : options.get("--model", "builtin:BlackstarHT1");
+  const auto r = evil::agent::measureTone(settingsFrom(options), model,
+                                          options.get("--ir", "builtin:EvilCab4x12"));
+  if (r.error.isNotEmpty())
+    fail(r.error);
+  printf("level %6.1f dB | touch %5.1f dB (alone %5.1f) | distortion gentle %5.1f%% hard "
+         "%5.1f%% (alone %4.1f%% %4.1f%%)\n  bands vs alone:",
+         r.levelDb, r.touchDb, r.touchDbCaptureAlone, r.distortionLightPercent,
+         r.distortionHardPercent, r.distortionLightCaptureAlone, r.distortionHardCaptureAlone);
+  for (size_t b = 0; b < r.bandDb.size(); ++b)
+    printf(" %+5.1f", r.bandDb[b] - r.bandDbCaptureAlone[b]);
+  printf("\n");
+  return 0;
+}
+
+int commandTone3000(const Options &options) {
+  using evil::agent::AgentSettings;
+  using evil::agent::Tone3000;
+  const auto action = options.positional.empty() ? juce::String("status")
+                                                 : options.positional[0];
+  juce::SharedResourcePointer<AgentSettings> settings;
+  const auto key =
+      juce::SystemStats::getEnvironmentVariable("TONE3000_PUBLISHABLE_KEY", {});
+  if (key.isNotEmpty())
+    settings->setForThisRun(AgentSettings::tone3000Key, key);
+
+  evil::agent::WebHttpClient http;
+  Tone3000 tone3000(
+      http, settings.get(), [](const juce::URL &) {},
+      [](const Tone3000::SignInCode &code) {
+        std::cout << "enter " << code.userCode << " at " << code.verificationUri
+                  << ", on any device\nor open " << code.linkWithCode
+                  << "\nwaiting..." << std::endl;
+      });
+
+  if (action == "disconnect") {
+    tone3000.disconnect();
+    std::cout << "signed out" << std::endl;
+    return 0;
+  }
+  if (action == "connect") {
+    if (tone3000.isConnected()) {
+      std::cout << "already signed in" << std::endl;
+      return 0;
+    }
+    const auto error = tone3000.signInWithCode({});
+    if (error.isNotEmpty())
+      fail(error);
+    std::cout << "signed in, and it stays that way" << std::endl;
+    return 0;
+  }
+  if (action != "status")
+    fail("usage: evil-cli tone3000 status|connect|disconnect");
+
+  // Says whether it works, by using it; never prints a key or token.
+  std::cout << "key: " << (tone3000.hasKey() ? "yes" : "no") << "\nsigned in: "
+            << (tone3000.isConnected() ? "yes" : "no") << std::endl;
+  if (!tone3000.isConnected())
+    return 1;
+  juce::String error;
+  const auto latest = tone3000.listTones("latest", {}, {}, error);
+  if (error.isNotEmpty()) {
+    std::cout << "not working: " << error << std::endl;
+    return 1;
+  }
+  const auto expiry = juce::Time(settings->get(AgentSettings::tone3000Expiry).getLargeIntValue());
+  std::cout << "TONE3000 accepted it, and sent " << latest.size() << " tones\n"
+            << "token good until " << expiry.toString(true, true)
+            << ", then it refreshes by itself" << std::endl;
+  return 0;
+}
+
 int main(int argc, char **argv) {
   juce::ScopedNoDenormals noDenormals;  // as the plugin's processBlock does
   juce::ScopedJuceInitialiser_GUI juce; // message manager for ChangeBroadcaster
   if (argc < 2) {
     std::cerr
-        << "usage: evil-cli render|esr|bench|info ...  (see tools/evil_cli.cpp)"
+        << "usage: evil-cli render|esr|bench|info|agent|measure|tone3000 ...  (see tools/evil_cli.cpp)"
         << std::endl;
     return 1;
   }
@@ -400,6 +596,12 @@ int main(int argc, char **argv) {
     return esr(options);
   if (command == "bench")
     return bench(options);
+  if (command == "agent")
+    return commandAgent(options);
+  if (command == "tone3000")
+    return commandTone3000(options);
+  if (command == "measure")
+    return commandMeasure(options);
   if (command == "info")
     return info(options);
   if (command == "devices")

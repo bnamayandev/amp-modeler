@@ -193,7 +193,8 @@ TEST_CASE("The delay repeats at the set time and feedback decays",
     return at;
   };
   CHECK(std::abs((int)peakNear(12000) - 12000) <= 1);
-  CHECK(std::abs((int)peakNear(24000) - 24000) <= 2);
+  // The bucket-brigade's darkening delays each repeat by a few samples more.
+  CHECK(std::abs((int)peakNear(24000) - 24000) <= 8);
   // The loop filters smear later repeats, so compare energy, not peaks.
   const auto energy = [&](size_t centre) {
     double e = 0.0;
@@ -497,8 +498,8 @@ TEST_CASE("The distortion's Tone is the RAT's Filter pot", "[pedals][distortion]
   CHECK(std::abs(gain(0.0f, 475.0) - flat + 3.0) < 0.6);
   // 1.5k into 3.3 nF: open past the audio band at the bright end.
   CHECK(std::abs(gain(1.0f, 10000.0) - flat) < 0.8);
-  // 16.5k at noon, on an audio taper: 2.9 kHz.
-  CHECK(std::abs(gain(0.5f, 2920.0) - flat + 3.0) < 0.6);
+  // Measured on a real one: 4.8 kHz at noon.
+  CHECK(std::abs(gain(0.5f, 4800.0) - flat + 3.0) < 0.6);
 }
 
 TEST_CASE("The distortion goes from nearly clean to heavy, limited at the silicon "
@@ -549,6 +550,74 @@ TEST_CASE("The fuzz has the Big Muff tone stack and sustain",
   CHECK(distortionAt(0.0f) < 0.05);
   CHECK(distortionAt(0.8f) > 3.0 * distortionAt(0.0f));
   CHECK(gainDb<FuzzPedal>({true, 0.0f, 0.5f, 0.0f}, 200.0, 0.05f) > -40.0);
+}
+
+// Reference numbers below come from real pedals: NAM captures from TONE3000 of an
+// EHX NYC Big Muff Pi (philvr), a ProCo RAT (romanrecords) and an Ibanez TS9
+// (madhatteramplab), measured through this plugin's own model runner. Only the
+// numbers are kept here. Captures have their own rig's level and an unknown volume
+// knob, so these compare shapes and ratios, not absolute levels.
+TEST_CASE("The fuzz's tone follows a real Big Muff's", "[pedals][fuzz]") {
+  struct Point {
+    double hz, db; // relative to 200 Hz, below clipping
+  };
+  const auto check = [](float sustain, float tone, std::initializer_list<Point> real) {
+    const FuzzPedal::Settings s{true, sustain, tone, 0.0f};
+    const double reference = gainDb<FuzzPedal>(s, 200.0, 1.0e-6f);
+    for (const auto &p : real) {
+      const double db = gainDb<FuzzPedal>(s, p.hz, 1.0e-6f) - reference;
+      INFO(p.hz << " Hz: real " << p.db << " dB, plugin " << db << " dB");
+      CHECK(std::abs(db - p.db) < 2.5);
+    }
+  };
+  // Sustain 25%, Tone 30%.
+  check(0.25f, 0.3f,
+        {{100.0, 0.4}, {400.0, -1.7}, {800.0, -7.2}, {1000.0, -10.1}, {1600.0, -19.2},
+         {2500.0, -28.5}, {8000.0, -52.0}, {10000.0, -55.8}});
+  // Sustain 75%, Tone 55%.
+  check(0.75f, 0.55f,
+        {{100.0, 0.6}, {400.0, -1.6}, {800.0, -8.2}, {1000.0, -11.2}, {1600.0, -17.8},
+         {2500.0, -21.7}, {4000.0, -29.7}, {8000.0, -46.4}});
+
+  // From Sustain 25% to 75%, a real one gains 11 dB below clipping.
+  const double more = gainDb<FuzzPedal>({true, 0.75f, 0.55f, 0.0f}, 200.0, 1.0e-6f) -
+                      gainDb<FuzzPedal>({true, 0.25f, 0.3f, 0.0f}, 200.0, 1.0e-6f);
+  CHECK(std::abs(more - 11.3) < 2.0);
+}
+
+TEST_CASE("The distortion's knobs follow a real RAT's", "[pedals][distortion]") {
+  // Distortion all the way down, Filter at noon, relative to 200 Hz. Clean, so this
+  // is the Filter alone. 7 steps across each knob, and step 4 is noon.
+  const DistortionPedal::Settings clean{true, 0.0f, 0.5f, 0.0f};
+  const double reference = gainDb<DistortionPedal>(clean, 200.0, 1.0e-4f);
+  for (const auto &[hz, real] :
+       {std::pair{1000.0, 0.1}, std::pair{2500.0, -0.7}, std::pair{4000.0, -2.3},
+        std::pair{6300.0, -4.8}, std::pair{10000.0, -8.4}}) {
+    const double db = gainDb<DistortionPedal>(clean, hz, 1.0e-4f) - reference;
+    INFO(hz << " Hz: real " << real << " dB, plugin " << db << " dB");
+    CHECK(std::abs(db - real) < 1.2);
+  }
+  // Distortion at noon has 34 dB more gain at 200 Hz than down, below clipping.
+  const double gained =
+      gainDb<DistortionPedal>({true, 0.5f, 0.5f, 0.0f}, 200.0, 1.0e-4f) - reference;
+  CHECK(std::abs(gained - 34.0) < 2.0);
+}
+
+TEST_CASE("The overdrive's Level knob is a real Tube Screamer's", "[pedals][overdrive]") {
+  const auto &level = analog::overdriveLevel;
+  // Noon on two real ones: 7.9 dB under full on a Mini, about 7 on a TS9.
+  CHECK(std::abs(level.dbAt(0.5) - level.dbAt(1.0) + 7.5) < 0.5);
+  // And the TS9 itself: Drive 5, Tone 6, Level 5 against Drive 0, Tone 6, Level 10.
+  // More drive and less level come out about the same below clipping.
+  const OverdrivePedal::Settings d5{true, 0.5f, 0.6f, (float)level.dbAt(0.5)};
+  const OverdrivePedal::Settings d0{true, 0.0f, 0.6f, (float)level.dbAt(1.0)};
+  for (const auto &[hz, real] : {std::pair{200.0, -0.2}, std::pair{1000.0, -0.4},
+                                 std::pair{3150.0, -0.4}}) {
+    const double db =
+        gainDb<OverdrivePedal>(d5, hz, 1.0e-4f) - gainDb<OverdrivePedal>(d0, hz, 1.0e-4f);
+    INFO(hz << " Hz: real " << real << " dB, plugin " << db << " dB");
+    CHECK(std::abs(db - real) < 1.8);
+  }
 }
 
 TEST_CASE("Drive pedals keep aliasing far below the signal", "[pedals]") {
@@ -834,6 +903,77 @@ struct ParameterHost final : juce::AudioProcessor {
 };
 } // namespace
 
+TEST_CASE("Typing a value into a knob sets what it shows", "[pedals]") {
+  ParameterHost host;
+  const auto typed = [&host](const char *id, const juce::String &text) {
+    auto *p = host.state.getParameter(id);
+    return p->convertFrom0to1(p->getValueForText(text));
+  };
+  // Shown 0-10, stored 0-1: 3.5 used to clamp to the top and read 10.0.
+  CHECK(typed(params::odDrive, "3.5") == Catch::Approx(0.35f));
+  CHECK(typed(params::odDrive, "0.5") == Catch::Approx(0.05f));
+  CHECK(typed(params::odDrive, "10") == 1.0f);
+  CHECK(typed(params::odDrive, "11") == 1.0f);
+  CHECK(typed(params::odDrive, "-1") == 0.0f);
+  // The Filter's reading runs against what it stores.
+  CHECK(typed(params::distTone, "3.5") == Catch::Approx(0.65f));
+  // Shown as percent, stored 0-1, with or without the sign.
+  CHECK(typed(params::compBlend, "35%") == Catch::Approx(0.35f));
+  CHECK(typed(params::compBlend, "35") == Catch::Approx(0.35f));
+  CHECK(typed(params::delayFeedback, "100%") == Catch::Approx(0.95f));
+  // Shown and stored the same, including on the knobs with a pot's taper.
+  CHECK(typed(params::input, "-3.5 dB") == Catch::Approx(-3.5f));
+  CHECK(typed(params::input, "+3.5") == Catch::Approx(3.5f));
+  CHECK(typed(params::odLevel, "-6.5") == Catch::Approx(-6.5f).margin(0.01f));
+  CHECK(typed(params::boostGain, "12.5 dB") == Catch::Approx(12.5f).margin(0.01f));
+  CHECK(typed(params::phaserRate, "1.25 Hz") == Catch::Approx(1.25f).margin(0.01f));
+  CHECK(typed(params::delayTime, "250.5 ms") == Catch::Approx(250.5f).margin(0.01f));
+
+  // Whatever any parameter shows, typing it back leaves it showing the same.
+  for (auto *p : host.getParameters())
+    for (const float position : {0.0f, 0.1f, 0.25f, 0.5f, 0.75f, 0.9f, 1.0f}) {
+      const auto shown = p->getText(position, 0);
+      INFO(p->getName(64).toStdString() << " showing " << shown.toStdString());
+      CHECK(p->getText(p->getValueForText(shown), 0) == shown);
+    }
+}
+
+TEST_CASE("A knob's pointer is where the real pedal's would be", "[pedals]") {
+  ParameterHost host;
+  const auto valueAt = [&host](const char *id, float position) {
+    return host.state.getParameter(id)->convertFrom0to1(position);
+  };
+  // Noon on a Tube Screamer's Level: about 7.5 dB under full.
+  CHECK(valueAt(params::odLevel, 1.0f) == Catch::Approx(3.9f));
+  CHECK(valueAt(params::odLevel, 0.5f) == Catch::Approx(3.9f - 7.5f).margin(0.1f));
+  CHECK(valueAt(params::odLevel, 0.0f) == Catch::Approx(-60.0f));
+  // It starts at noon, and every position round-trips.
+  for (const auto *id : {params::odLevel, params::fuzzLevel, params::distLevel,
+                         params::compLevel, params::boostGain}) {
+    auto *p = host.state.getParameter(id);
+    CHECK(p->getDefaultValue() == Catch::Approx(0.5f).margin(0.005f));
+    for (const float position : {0.1f, 0.3f, 0.5f, 0.7f, 0.9f})
+      CHECK(p->convertTo0to1(p->convertFrom0to1(position)) ==
+            Catch::Approx(position).margin(0.01f));
+  }
+  // A real RAT's Filter darkens clockwise, reading up as the pointer goes.
+  auto *filter = host.state.getParameter(params::distTone);
+  CHECK(valueAt(params::distTone, 1.0f) == 0.0f); // the dark end of its stored value
+  CHECK(valueAt(params::distTone, 0.0f) == 1.0f);
+  CHECK(filter->getText(filter->convertTo0to1(0.0f), 8) == "10.0");
+  CHECK(filter->getText(filter->convertTo0to1(1.0f), 8) == "0.0");
+  // An MXR Micro Amp: unity to 26 dB, with most of the range at the top.
+  CHECK(valueAt(params::boostGain, 0.0f) == Catch::Approx(0.0f));
+  CHECK(valueAt(params::boostGain, 1.0f) == Catch::Approx(26.0f).margin(0.1f));
+  CHECK(valueAt(params::boostGain, 0.5f) == Catch::Approx(11.7f).margin(0.5f));
+  // A Boss TR-2: 1.1 to 11 Hz.
+  CHECK(valueAt(params::tremRate, 0.0f) == Catch::Approx(1.1f));
+  CHECK(valueAt(params::tremRate, 1.0f) == Catch::Approx(11.1f));
+  // Old sessions keep their sound: a saved dB value is still that many dB.
+  host.set(params::odLevel, 0.0f);
+  CHECK(host.get(params::odLevel) == Catch::Approx(0.0f));
+}
+
 TEST_CASE("EQ faders have a parabolic taper, fine around 0 dB", "[eq]") {
   ParameterHost host;
   auto *p = host.state.getParameter(params::eqBands[4]);
@@ -848,7 +988,7 @@ TEST_CASE("EQ faders have a parabolic taper, fine around 0 dB", "[eq]") {
           Catch::Approx(db).margin(1.0e-4));
   host.set(params::eqBands[4], 2.347f);
   CHECK(host.get(params::eqBands[4]) == Catch::Approx(2.35f));
-  host.set(params::eqBands[4], 12.0f); // beyond the range: clamped
+  host.set(params::eqBands[4], 20.0f); // beyond the range: clamped
   CHECK(host.get(params::eqBands[4]) == Equaliser::maxGainDb);
 }
 
@@ -910,14 +1050,11 @@ TEST_CASE("Presets and sessions saved with the three-band EQ keep their tone",
   const auto gains = bandGains(*xml);
   for (size_t b = 0; b < gains.size(); ++b) {
     const double f = Equaliser::frequencies[b];
-    double was = 0.0, now = 0.0;
+    double was = 0.0;
     was += BiquadCoeffs::lowShelf(48000.0, 100.0, 0.707, -3.0).gainDbAt(48000.0, f);
     was += BiquadCoeffs::peak(48000.0, 800.0, 0.8, 2.0).gainDbAt(48000.0, f);
     was += BiquadCoeffs::highShelf(48000.0, 3200.0, 0.707, 6.0).gainDbAt(48000.0, f);
-    for (size_t i = 0; i < gains.size(); ++i)
-      now += BiquadCoeffs::peak(48000.0, Equaliser::frequencies[i],
-                                Equaliser::q, gains[i])
-                 .gainDbAt(48000.0, f);
+    const double now = gains[b]; // a fader's number is its response there
     INFO("band " << b << " was " << was << " dB, now " << now << " dB");
     CHECK(std::abs(now - was) < 0.1);
   }

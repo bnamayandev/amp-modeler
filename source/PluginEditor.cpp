@@ -1,5 +1,7 @@
 #include "PluginEditor.h"
 
+#include "StandaloneApp.h"
+
 namespace evil {
 namespace {
 void styleLabel(juce::Label &label, const juce::Font &font,
@@ -24,11 +26,12 @@ juce::String formatEsr(double esr) {
 
 EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
     : AudioProcessorEditor(p), audioProcessor(p), pedalBoard(p.getState()),
-      inputKnob(p.getState(), params::input, "Input"),
+      agentPage(p.getAgent(), p.getAgentSettings()),
+      inputKnob(p.getState(), params::input, "Gain"),
       gateKnob(p.getState(), params::gateThreshold, "Gate"),
       gateAttachment(p.getState(), params::gateOn, gateButton),
       cabAttachment(p.getState(), params::cabOn, cabButton),
-      outputKnob(p.getState(), params::output, "Output"),
+      outputKnob(p.getState(), params::output, "Level"),
       bpmAttachment(p.getState(), params::metronomeBpm, bpmSlider),
       metronomeLevelAttachment(p.getState(), params::metronomeLevel,
                                metronomeLevelSlider),
@@ -37,7 +40,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
                                            "7/4"})) {
   // Header
   for (auto [page, tab] : {std::pair{0, &ampTab}, std::pair{1, &pedalsTab},
-                           std::pair{2, &tunerTab}}) {
+                           std::pair{2, &tunerTab}, std::pair{3, &agentTab}}) {
     gui::setTab(*tab);
     tab->onClick = [this, page = page] { showPage(page); };
     canvas.addAndMakeVisible(tab);
@@ -45,6 +48,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   ampTab.setTooltip("Amp, cabinet and EQ");
   pedalsTab.setTooltip("Stomp boxes before and after the amp");
   tunerTab.setTooltip("Tune your guitar, to standard or a tuning of your own");
+  agentTab.setTooltip("Ask for a tone, and an AI on your own API key sets it up");
   canvas.addAndMakeVisible(presetBox);
   presetBox.setTooltip("Presets: factory first, then yours");
   presetBox.onChange = [this] {
@@ -62,7 +66,17 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   refreshPresetList();
   canvas.addAndMakeVisible(settingsButton);
   settingsButton.onClick = [this] { showSettings(); };
-  settingsButton.setTooltip("Accent colour, for every instance");
+  settingsButton.setTooltip(isStandalone()
+                                ? "Audio device, saved states and accent colour"
+                                : "Accent colour, for every instance");
+  if (isStandalone()) {
+    canvas.addAndMakeVisible(minimiseButton);
+    canvas.addAndMakeVisible(closeButton);
+    minimiseButton.onClick = [] { standalone::minimiseWindow(); };
+    closeButton.onClick = [] { standalone::closeWindow(); };
+    minimiseButton.setTooltip("Minimise");
+    closeButton.setTooltip("Quit");
+  }
 
   // Input
   for (auto *c : std::initializer_list<juce::Component *>{
@@ -71,12 +85,12 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   gateButton.setTooltip("Noise gate before the amp");
 
   // Amp
-  styleLabel(modelName, gui::sans(19.0f, true, -0.015f), gui::colours::text);
-  styleLabel(modelDetails, gui::mono(11.0f), gui::colours::muted);
+  styleLabel(modelName, gui::display(36.0f), gui::colours::text);
+  styleLabel(modelDetails, gui::sans(14.0f), gui::colours::textSoft);
   modelDetails.setJustificationType(juce::Justification::topLeft);
   for (auto *c : std::initializer_list<juce::Component *>{
-           &modelName, &modelDetails, &loadModelButton, &builtinModelButton,
-           &unloadModelButton})
+           &tubes, &modelName, &modelDetails, &loadModelButton,
+           &builtinModelButton, &unloadModelButton})
     ampPage.addAndMakeVisible(c);
   loadModelButton.onClick = [this] { chooseModelFile(); };
   builtinModelButton.onClick = [this] { showBuiltinModels(); };
@@ -85,10 +99,12 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   unloadModelButton.setTooltip("Play without a model: the amp passes clean");
 
   // Cab
-  styleLabel(irName, gui::sans(17.0f, true, -0.015f), gui::colours::text);
-  styleLabel(irDetails, gui::mono(11.0f), gui::colours::muted);
+  styleLabel(irName, gui::display(24.0f), gui::colours::text);
+  styleLabel(irDetails, gui::sans(13.0f), gui::colours::textSoft);
+  irDetails.setJustificationType(juce::Justification::topLeft);
   for (auto *c : std::initializer_list<juce::Component *>{
-           &irName, &irDetails, &loadIrButton, &builtinIrButton, &cabButton})
+           &speaker, &irName, &irDetails, &loadIrButton, &builtinIrButton,
+           &cabButton})
     ampPage.addAndMakeVisible(c);
   loadIrButton.onClick = [this] { chooseIrFile(); };
   builtinIrButton.onClick = [this] { showBuiltinIrs(); };
@@ -105,11 +121,13 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   for (auto *c :
        std::initializer_list<juce::Component *>{&outputKnob, &outputMeter})
     ampPage.addAndMakeVisible(c);
+  outputKnob.setMaxDiameter(128);
 
   ampPage.setInterceptsMouseClicks(false, true);
   canvas.addAndMakeVisible(ampPage);
   canvas.addChildComponent(pedalBoard);
   canvas.addChildComponent(tunerPage);
+  canvas.addChildComponent(agentPage);
 
   // Footer: metronome
   canvas.addAndMakeVisible(metronomeButton);
@@ -124,6 +142,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
       "Tap the tempo; each tap also restarts the bar on the beat");
   for (auto *slider : {&bpmSlider, &metronomeLevelSlider}) {
     slider->setSliderSnapsToMousePosition(false);
+    gui::ignoreTextWithoutNumber(*slider);
     canvas.addAndMakeVisible(slider);
   }
   bpmSlider.setTooltip("Tempo (drag, or double-click to type)");
@@ -139,7 +158,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   }
   transposeDown.setTooltip("Transpose down a semitone");
   transposeUp.setTooltip("Transpose up a semitone");
-  styleLabel(transposeLabel, gui::mono(12.5f), gui::colours::textSoft);
+  styleLabel(transposeLabel, gui::readout(14.0f), gui::colours::textSoft);
   transposeLabel.setJustificationType(juce::Justification::centred);
   transposeLabel.setTooltip(
       "Transposer: shifts everything you play by semitones, e.g. -1 for "
@@ -160,7 +179,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
 
   // Footer: stats
   for (auto *l : {&cpuLabel, &latencyLabel}) {
-    styleLabel(*l, gui::mono(11.5f), gui::colours::text);
+    styleLabel(*l, gui::readout(12.0f), gui::colours::textSoft);
     l->setJustificationType(juce::Justification::centredRight);
     canvas.addAndMakeVisible(l);
   }
@@ -171,9 +190,12 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   audioProcessor.getModels().addChangeListener(this);
   settings->addChangeListener(this);
   refreshModelStatus();
+  refreshAmpHardware(0.0f);
+  tubes.snapTo(modelLive, 0.0f);
   refreshIrStatus();
   refreshStats();
   refreshMetronome();
+  applyPresetColour();
   showPage(audioProcessor.editorPage);
 
   addAndMakeVisible(canvas);
@@ -187,7 +209,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   // standalone's window manager may impose any size (tiling, maximise, snap);
   // the constrainer would then shrink the editor inside the bigger window and
   // leave it unpainted. resized() letterboxes, so any size works there.
-  if (p.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+  if (!isStandalone())
     getConstrainer()->setFixedAspectRatio((double)designWidth / designHeight);
   setSize(designWidth, designHeight);
   startTimerHz(30);
@@ -214,178 +236,223 @@ void EvilAmplifierEditor::resized() {
 }
 
 void EvilAmplifierEditor::paintCanvas(juce::Graphics &g) {
-  using namespace gui::colours;
-  g.fillAll(background);
+  fixedParts.draw(g, canvas.getLocalBounds(), ampPage.isVisible() ? 1 : 0,
+                  [this](juce::Graphics &c) { paintFixedParts(c); });
+  paintBeatLights(g);
+  if (!ampPage.isVisible())
+    return;
 
-  // Header: lowercase name, "evil" under a marker-pen highlight.
-  {
-    const auto font = gui::sans(25.0f, true, -0.035f);
-    const auto evilWidth = juce::GlyphArrangement::getStringWidth(font, "evil");
-    g.setColour(background.interpolatedWith(accent(), 0.32f));
-    g.fillRect(juce::Rectangle<float>(18.0f, 19.0f, evilWidth + 6.0f, 23.0f));
-    g.setFont(font);
-    g.setColour(text);
-    g.drawText("evil", juce::Rectangle<float>(21.0f, 14.0f, 80.0f, 32.0f),
-               juce::Justification::centredLeft, false);
-    g.drawText("amplifier",
-               juce::Rectangle<float>(21.0f + evilWidth + 9.0f, 14.0f, 140.0f,
-                                      32.0f),
-               juce::Justification::centredLeft, false);
-  }
-  g.setColour(line);
+  // The gate's activity light, and the amp's pilot light.
+  const bool gateEnabled =
+      audioProcessor.getState().getRawParameterValue(params::gateOn)->load() >= 0.5f;
+  gui::drawLed(g, gateLed, gateEnabled && audioProcessor.isGateOpen(),
+               gui::colours::accent());
+  gui::drawLed(g, liveLed, modelLive, gui::colours::accent());
+  g.setFont(gui::caption());
+  g.setColour(modelLive ? gui::colours::text : gui::colours::muted);
+  g.drawText(modelLive ? "LIVE" : "STANDBY",
+             juce::Rectangle<float>(liveLed.getX() - 69.0f, liveLed.getY() - 4.0f, 60.0f,
+                                    liveLed.getHeight() + 8.0f),
+             juce::Justification::centredRight, false);
+}
+
+void EvilAmplifierEditor::paintFixedParts(juce::Graphics &g) {
+  using namespace gui::colours;
+  const juce::Rectangle<int> design(designWidth, designHeight);
+  gui::drawChassis(g, design);
+
+  // Vinyl along the top, and a shadow from it across the rack.
+  gui::drawVinyl(g, design.withHeight(headerHeight));
+  g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.75f), 0.0f,
+                                         (float)headerHeight, juce::Colours::black.withAlpha(0.0f),
+                                         0.0f, (float)headerHeight + 14.0f, false));
+  g.fillRect(0, headerHeight, designWidth, 14);
+  g.setColour(juce::Colours::white.withAlpha(0.13f));
   g.fillRect(0, headerHeight - 1, designWidth, 1);
+  gui::drawLogo(g, {18.0f, 7.0f}, 50.0f);
+  gui::drawRecess(g, tabTray.toFloat(), 4.0f);
 
   paintFooter(g);
   if (!ampPage.isVisible())
     return;
 
-  const auto inputRule = gui::drawPanel(g, inputPanel, 1, "Input");
-  gui::drawPanel(g, ampPanel, 2, "Amp");
-  gui::drawPanel(g, cabPanel, 3, "Cabinet");
-  gui::drawPanel(g, eqPanel, 4, "EQ");
-  gui::drawPanel(g, outputPanel, 5, "Output");
+  gui::drawPanel(g, inputPanel, "Input", 22.0f);
+  gui::drawPanel(g, ampPanel, "Amp", 86.0f);
+  gui::drawPanel(g, cabPanel, "Cabinet");
+  gui::drawPanel(g, eqPanel, "EQ");
+  gui::drawPanel(g, outputPanel, "Output");
 
-  // Gate activity LED, at the end of the input panel's header rule.
-  gateLed = juce::Rectangle<float>(8.0f, 8.0f).withCentre(
-      {inputRule.getRight() - 4.0f, inputRule.getCentreY()});
-  const bool gateEnabled =
-      audioProcessor.getState().getRawParameterValue(params::gateOn)->load() >=
-      0.5f;
-  const bool gateOpen = gateEnabled && audioProcessor.isGateOpen();
-  g.setColour(panel);
-  g.fillRect(gateLed.expanded(8.0f, 0.0f).withHeight(2.0f).withCentre(
-      gateLed.getCentre())); // gap in the rule
-  if (gateOpen) {
-    g.setGradientFill(juce::ColourGradient(
-        accent().withAlpha(0.55f), gateLed.getCentre(), accent().withAlpha(0.0f),
-        gateLed.getCentre().translated(10.0f, 0.0f), true));
-    g.fillEllipse(gateLed.expanded(6.0f));
+  // The amp's display: smoked glass with the tubes behind it.
+  const auto display = ampDisplay.toFloat();
+  gui::drawRecess(g, display, 4.0f);
+  {
+    const juce::Graphics::ScopedSaveState save(g);
+    g.reduceClipRegion(ampDisplay.reduced(1));
+    // The glass picks up a reflection across its top corner.
+    juce::Path reflection;
+    reflection.startNewSubPath(display.getX(), display.getY());
+    reflection.lineTo(display.getX() + display.getWidth() * 0.62f, display.getY());
+    reflection.lineTo(display.getX() + display.getWidth() * 0.38f, display.getBottom());
+    reflection.lineTo(display.getX(), display.getBottom());
+    reflection.closeSubPath();
+    g.setGradientFill(juce::ColourGradient(juce::Colours::white.withAlpha(0.045f),
+                                           display.getX(), display.getY(),
+                                           juce::Colours::white.withAlpha(0.0f),
+                                           display.getX() + display.getWidth() * 0.5f,
+                                           display.getBottom(), false));
+    g.fillPath(reflection);
   }
-  g.setColour(gateOpen ? accent() : gateEnabled ? mutedSoft : lineSoft);
-  g.fillEllipse(gateLed);
-  if (!gateEnabled) {
-    g.setColour(line);
-    g.drawEllipse(gateLed.reduced(0.5f), 1.0f);
-  }
+  g.setFont(gui::silk(12.0f, 0.15f));
+  g.setColour(accent());
+  g.drawText("NEURAL AMP MODEL", ampCaption, juce::Justification::centredLeft, false);
 }
 
 void EvilAmplifierEditor::layoutCanvas() {
   const juce::Rectangle<int> design(designWidth, designHeight);
 
-  // Header: name, tabs (underlined on the header rule), presets.
-  auto header = design.withHeight(headerHeight).reduced(16, 14);
-  header.removeFromLeft(196);
+  // Header: logo, tabs in their tray, presets.
+  auto header = design.withHeight(headerHeight).reduced(16, 0);
+  header.removeFromLeft(100);
+  header.removeFromLeft(16);
+  tabTray = header.removeFromLeft(298).withSizeKeepingCentre(298, 38);
   {
-    auto tabs = header.removeFromLeft(220).withBottom(headerHeight);
-    ampTab.setBounds(tabs.removeFromLeft(60));
-    tabs.removeFromLeft(4);
-    pedalsTab.setBounds(tabs.removeFromLeft(92));
-    tabs.removeFromLeft(4);
-    tunerTab.setBounds(tabs);
+    auto tabs = tabTray.reduced(3);
+    ampTab.setBounds(tabs.removeFromLeft(58));
+    tabs.removeFromLeft(1);
+    pedalsTab.setBounds(tabs.removeFromLeft(98));
+    tabs.removeFromLeft(1);
+    tunerTab.setBounds(tabs.removeFromLeft(67));
+    tabs.removeFromLeft(1);
+    agentTab.setBounds(tabs);
   }
-  header.removeFromLeft(24);
-  header = header.withSizeKeepingCentre(header.getWidth(), 30);
-  prevPreset.setBounds(header.removeFromLeft(30));
-  header.removeFromLeft(6);
-  presetBox.setBounds(header.removeFromLeft(256));
-  header.removeFromLeft(6);
-  nextPreset.setBounds(header.removeFromLeft(30));
-  header.removeFromLeft(12);
-  savePreset.setBounds(header.removeFromLeft(70));
-  settingsButton.setBounds(header.removeFromRight(84));
+  header.removeFromLeft(16);
+  header = header.withSizeKeepingCentre(header.getWidth(), 32);
+  prevPreset.setBounds(header.removeFromLeft(28));
+  header.removeFromLeft(4);
+  presetBox.setBounds(header.removeFromLeft(isStandalone() ? 166 : 214));
+  header.removeFromLeft(4);
+  nextPreset.setBounds(header.removeFromLeft(28));
+  header.removeFromLeft(10);
+  savePreset.setBounds(header.removeFromLeft(58));
+  if (isStandalone()) {
+    closeButton.setBounds(header.removeFromRight(24));
+    header.removeFromRight(2);
+    minimiseButton.setBounds(header.removeFromRight(24));
+    header.removeFromRight(8);
+  }
+  settingsButton.setBounds(header.removeFromRight(78));
 
   // Footer: metronome on the left; transposer and stats on the right.
   {
-    auto footer = design.withTop(designHeight - footerHeight).reduced(16, 10);
+    auto footer = design.withTop(designHeight - footerHeight).reduced(16, 9);
     footer.removeFromRight(14); // clear of the window's resize corner
     const auto next = [&footer](int width, int gapAfter) {
       const auto r = footer.removeFromLeft(width);
       footer.removeFromLeft(gapAfter);
       return r;
     };
-    metronomeCaption = next(74, 8);
-    metronomeButton.setBounds(next(56, 6));
+    metronomeCaption = next(70, 8);
+    metronomeButton.setBounds(next(54, 6));
     bpmSlider.setBounds(next(84, 6));
     tapButton.setBounds(next(44, 6));
     beatsBox.setBounds(next(62, 6));
-    metronomeLevelSlider.setBounds(next(72, 12));
-    beatLeds = next(7 * 11, 0);
+    metronomeLevelSlider.setBounds(next(74, 12));
+    beatLeds = next(7 * 12, 0);
 
-    auto stats = footer.removeFromRight(170).withSizeKeepingCentre(170, 30);
+    statsArea = footer.removeFromRight(176).withSizeKeepingCentre(176, 30);
+    auto stats = statsArea;
     cpuLabel.setBounds(stats.removeFromTop(15));
     latencyLabel.setBounds(stats);
-    footer.removeFromRight(24);
+    footer.removeFromRight(20);
     transposeUp.setBounds(footer.removeFromRight(28));
     footer.removeFromRight(4);
-    transposeLabel.setBounds(footer.removeFromRight(56));
+    transposeLabel.setBounds(footer.removeFromRight(52));
     footer.removeFromRight(4);
     transposeDown.setBounds(footer.removeFromRight(28));
     footer.removeFromRight(8);
-    transposeCaption = footer.removeFromRight(70);
+    transposeCaption = footer.removeFromRight(66);
   }
 
   ampPage.setBounds(design);
   auto body = design.withTrimmedTop(headerHeight)
                   .withTrimmedBottom(footerHeight)
-                  .reduced(16, 12);
+                  .reduced(14, 12);
   pedalBoard.setBounds(body);
   tunerPage.setBounds(body);
-  auto top = body.removeFromTop(262);
-  body.removeFromTop(12);
+  agentPage.setBounds(body);
+  auto top = body.removeFromTop(268);
+  body.removeFromTop(10);
   auto bottom = body;
 
-  inputPanel = top.removeFromLeft(230);
-  top.removeFromLeft(12);
+  inputPanel = top.removeFromLeft(232);
+  top.removeFromLeft(10);
+  outputPanel = top.removeFromRight(186);
+  top.removeFromRight(10);
   ampPanel = top;
 
   cabPanel = bottom.removeFromLeft(340);
-  bottom.removeFromLeft(12);
-  outputPanel = bottom.removeFromRight(210);
-  bottom.removeFromRight(12);
+  bottom.removeFromLeft(10);
   eqPanel = bottom;
+
+  const auto titleLight = [](juce::Rectangle<int> panel, float size) {
+    return juce::Rectangle<float>(size, size).withCentre(
+        {(float)panel.getRight() - 30.0f, (float)panel.getY() + 17.5f});
+  };
 
   // Input: two knobs side by side, gate switch, meter on the right.
   {
-    auto b = inputPanel.reduced(14).withTrimmedTop(30);
-    inputMeter.setBounds(b.removeFromRight(6).withTrimmedBottom(4));
-    b.removeFromRight(8);
-    gateButton.setBounds(b.removeFromBottom(24).withTrimmedLeft(4));
+    gateLed = titleLight(inputPanel, 8.0f);
+    auto b = inputPanel.reduced(14, 0).withTrimmedTop(34).withTrimmedBottom(18);
+    inputMeter.setBounds(b.removeFromRight(12));
+    b.removeFromRight(6);
+    gateButton.setBounds(b.removeFromBottom(24).withTrimmedLeft(10));
     auto knobs = b.withTrimmedBottom(6);
     inputKnob.setBounds(knobs.removeFromLeft(knobs.getWidth() / 2));
     gateKnob.setBounds(knobs);
   }
 
-  // Amp: the loaded model, as the cab shows its IR.
+  // Amp: the display, with the tubes and what's loaded, and what to load.
   {
-    auto b = ampPanel.reduced(14).withTrimmedTop(36);
-    modelName.setBounds(b.removeFromTop(28));
-    modelDetails.setBounds(b.removeFromTop(40));
-    b.removeFromTop(10);
-    auto buttons = b.removeFromTop(28);
-    loadModelButton.setBounds(buttons.removeFromLeft(120));
-    buttons.removeFromLeft(8);
+    liveLed = titleLight(ampPanel, 9.0f);
+    auto b = ampPanel.reduced(16, 0).withTrimmedTop(34).withTrimmedBottom(16);
+    auto buttons = b.removeFromBottom(30);
+    b.removeFromBottom(10);
+    ampDisplay = b;
+    auto d = ampDisplay.reduced(14, 10);
+    tubes.setBounds(d.removeFromLeft(156));
+    d.removeFromLeft(18);
+    ampCaption = d.removeFromTop(18);
+    modelName.setBounds(d.removeFromTop(44));
+    d.removeFromTop(2);
+    modelDetails.setBounds(d);
+
+    loadModelButton.setBounds(buttons.removeFromLeft(112));
+    buttons.removeFromLeft(6);
     builtinModelButton.setBounds(buttons.removeFromLeft(84));
-    buttons.removeFromLeft(8);
-    unloadModelButton.setBounds(buttons.removeFromLeft(76));
+    buttons.removeFromLeft(6);
+    unloadModelButton.setBounds(buttons.removeFromLeft(74));
   }
 
-  // Cab
+  // Cab: the speaker, what's loaded, and how to change it.
   {
-    auto b = cabPanel.reduced(14).withTrimmedTop(36);
-    irName.setBounds(b.removeFromTop(26));
-    irDetails.setBounds(b.removeFromTop(36));
-    b.removeFromTop(10);
-    auto buttons = b.removeFromTop(28);
-    loadIrButton.setBounds(buttons.removeFromLeft(110));
-    buttons.removeFromLeft(8);
-    builtinIrButton.setBounds(buttons.removeFromLeft(84));
-    b.removeFromTop(12);
-    cabButton.setBounds(b.removeFromTop(24).withWidth(160));
+    auto b = cabPanel.reduced(14, 0).withTrimmedTop(34).withTrimmedBottom(18);
+    constexpr int cone = 146;
+    speaker.setBounds(b.removeFromLeft(cone).withSizeKeepingCentre(cone, cone));
+    b.removeFromLeft(14);
+    irName.setBounds(b.removeFromTop(30));
+    irDetails.setBounds(b.removeFromTop(52));
+    auto switchRow = b.removeFromBottom(26);
+    cabButton.setBounds(switchRow);
+    b.removeFromBottom(10);
+    auto buttons = b.removeFromBottom(30);
+    const int half = (buttons.getWidth() - 6) / 2;
+    loadIrButton.setBounds(buttons.removeFromLeft(half));
+    builtinIrButton.setBounds(buttons.removeFromRight(half));
   }
 
   // EQ
   {
-    auto b = eqPanel.reduced(14).withTrimmedTop(30);
+    auto b = eqPanel.reduced(14, 0).withTrimmedTop(32).withTrimmedBottom(14);
     const auto edge = [&b, this](size_t i) {
       return b.getX() + (int)(i * (size_t)b.getWidth() / eqFaders.size());
     };
@@ -397,26 +464,53 @@ void EvilAmplifierEditor::layoutCanvas() {
 
   // Output
   {
-    auto b = outputPanel.reduced(14).withTrimmedTop(30);
-    outputMeter.setBounds(b.removeFromRight(6).withTrimmedBottom(4));
-    b.removeFromRight(8);
+    auto b = outputPanel.reduced(14, 0).withTrimmedTop(34).withTrimmedBottom(18);
+    outputMeter.setBounds(b.removeFromRight(12));
+    b.removeFromRight(4);
     outputKnob.setBounds(b);
   }
 }
 
+void EvilAmplifierEditor::canvasMouseDown(const juce::MouseEvent &e) {
+  // Bare header in the standalone app drags the window, as a title bar would.
+  draggingWindow = isStandalone() && e.y < headerHeight;
+  if (draggingWindow)
+    windowDragger.startDraggingComponent(getTopLevelComponent(), e);
+}
+
+void EvilAmplifierEditor::canvasMouseDrag(const juce::MouseEvent &e) {
+  if (draggingWindow)
+    windowDragger.dragComponent(getTopLevelComponent(), e, nullptr);
+}
+
 void EvilAmplifierEditor::paintFooter(juce::Graphics &g) {
   using namespace gui::colours;
-  g.setColour(line);
-  g.fillRect(0, designHeight - footerHeight, designWidth, 1);
+  const auto strip = juce::Rectangle<int>(designWidth, designHeight)
+                         .withTop(designHeight - footerHeight);
+  gui::drawVinyl(g, strip);
+  g.setGradientFill(juce::ColourGradient(juce::Colours::black.withAlpha(0.0f), 0.0f,
+                                         (float)strip.getY() - 10.0f,
+                                         juce::Colours::black.withAlpha(0.6f), 0.0f,
+                                         (float)strip.getY(), false));
+  g.fillRect(0, strip.getY() - 10, designWidth, 10);
+  g.setColour(juce::Colours::white.withAlpha(0.13f));
+  g.fillRect(0, strip.getY(), designWidth, 1);
+
+  gui::drawRecess(g, transposeLabel.getBounds().toFloat(), 3.0f);
+  gui::drawRecess(g, statsArea.toFloat().expanded(6.0f, 0.0f), 3.0f);
 
   g.setFont(gui::caption());
-  g.setColour(muted);
+  g.setColour(textSoft);
   g.drawText("METRONOME", metronomeCaption, juce::Justification::centredLeft);
   g.drawText("TRANSPOSE", transposeCaption, juce::Justification::centredRight);
+  g.setColour(muted);
   g.drawText("CPU", cpuLabel.getBounds(), juce::Justification::centredLeft);
   g.drawText("LATENCY", latencyLabel.getBounds(),
              juce::Justification::centredLeft);
+}
 
+void EvilAmplifierEditor::paintBeatLights(juce::Graphics &g) {
+  using namespace gui::colours;
   // One light per beat; the current one flashes on its click, beat one in the
   // accent.
   const int beats =
@@ -430,29 +524,29 @@ void EvilAmplifierEditor::paintFooter(juce::Graphics &g) {
       juce::Time::getMillisecondCounterHiRes() - lastClickTime < 130.0;
   for (int i = 0; i < beats; ++i) {
     const auto led = juce::Rectangle<float>(7.0f, 7.0f).withCentre(
-        {(float)beatLeds.getX() + 5.5f + 11.0f * (float)i,
+        {(float)beatLeds.getX() + 5.5f + 12.0f * (float)i,
          (float)beatLeds.getCentreY()});
     if (i == current && flashing)
       gui::drawLed(g, led, true, i == 0 ? accent() : text);
-    else if (i == current) {
-      g.setColour(muted);
-      g.fillEllipse(led);
-    } else
-      gui::drawLed(g, led, false, accent());
+    else
+      gui::drawLed(g, led, false, i == current ? text : accent());
   }
 }
 
 void EvilAmplifierEditor::timerCallback() {
   constexpr float interval = 1.0f / 30.0f;
   inputMeter.pushPeak(audioProcessor.takeInputPeak(), interval);
-  outputMeter.pushPeak(audioProcessor.takeOutputPeak(), interval);
+  const float outputPeak = audioProcessor.takeOutputPeak();
+  outputMeter.pushPeak(outputPeak, interval);
 
   std::array<float, 4096> samples;
   auto &tap = audioProcessor.getAnalyserTap();
   for (int n; (n = tap.pull(samples.data(), (int)samples.size())) > 0;)
     eqSpectrum.push(samples.data(), n);
-  if (ampPage.isVisible())
+  if (ampPage.isVisible()) {
     eqSpectrum.refresh(audioProcessor.getSampleRate(), interval);
+    refreshAmpHardware(outputPeak);
+  }
 
   // Drained on every page, so the tuner never starts on stale samples.
   auto &tunerTap = audioProcessor.getTunerTap();
@@ -475,6 +569,8 @@ void EvilAmplifierEditor::timerCallback() {
     refreshIrStatus();
     refreshPedalsTab();
     refreshMetronome();
+    if (agentPage.isVisible())
+      agentPage.refresh();
     if (presetBox.getSelectedItemIndex() !=
         audioProcessor.getPresets().getCurrentIndex())
       presetBox.setSelectedItemIndex(
@@ -482,20 +578,36 @@ void EvilAmplifierEditor::timerCallback() {
           juce::dontSendNotification);
   }
   if (ampPage.isVisible())
-    canvas.repaint(gateLed.expanded(10.0f).getSmallestIntegerContainer());
+    canvas.repaint(gateLed.expanded(16.0f).getSmallestIntegerContainer());
+}
+
+void EvilAmplifierEditor::refreshAmpHardware(float outputPeak) {
+  // The tubes follow the signal over the top of a guitar's range.
+  const auto db = juce::Decibels::gainToDecibels(outputPeak, -100.0f);
+  tubes.update(modelLive, juce::jmap(juce::jlimit(-42.0f, -3.0f, db), -42.0f, -3.0f, 0.0f, 1.0f));
+  speaker.setActive(audioProcessor.getState().getRawParameterValue(params::cabOn)->load() >= 0.5f);
+
+  std::array<float, Equaliser::numBands> bands;
+  for (size_t b = 0; b < bands.size(); ++b)
+    bands[b] = audioProcessor.getState().getParameter(params::eqBands[b])->getValue();
+  eqSpectrum.setBands(bands, (double)Equaliser::maxGainDb);
 }
 
 void EvilAmplifierEditor::showPage(int page) {
-  page = juce::jlimit(0, 2, page);
+  page = juce::jlimit(0, 3, page);
   audioProcessor.editorPage = page;
   ampPage.setVisible(page == 0);
   pedalBoard.setVisible(page == 1);
   tunerPage.setVisible(page == 2);
+  agentPage.setVisible(page == 3);
   tunerPage.reset();
   ampTab.setToggleState(page == 0, juce::dontSendNotification);
   pedalsTab.setToggleState(page == 1, juce::dontSendNotification);
   tunerTab.setToggleState(page == 2, juce::dontSendNotification);
+  agentTab.setToggleState(page == 3, juce::dontSendNotification);
   refreshPedalsTab();
+  if (page == 3)
+    agentPage.pageShown();
   canvas.repaint();
 }
 
@@ -567,7 +679,8 @@ void EvilAmplifierEditor::changeListenerCallback(
 
 void EvilAmplifierEditor::applyAccent() {
   lookAndFeel.refreshAccent();
-  sendLookAndFeelChange(); // slider value boxes take the new edit outline
+  sendLookAndFeelChange(); // slider value boxes take the new edit tint
+  applyPresetColour();
   // Labels coloured by state.
   transposeAttachment->sendInitialUpdate();
   refreshModelStatus();
@@ -575,9 +688,17 @@ void EvilAmplifierEditor::applyAccent() {
   repaint();
 }
 
+void EvilAmplifierEditor::applyPresetColour() {
+  presetBox.setColour(juce::ComboBox::textColourId, gui::colours::accent());
+}
+
 void EvilAmplifierEditor::refreshModelStatus() {
   using State = ModelManager::State;
   const auto status = audioProcessor.getModels().getStatus();
+  if (const bool live = status.state == State::ready; live != modelLive) {
+    modelLive = live;
+    canvas.repaint(ampPanel.withHeight(34));
+  }
   switch (status.state) {
   case State::empty:
     modelName.setText("No model loaded", juce::dontSendNotification);
@@ -603,7 +724,10 @@ void EvilAmplifierEditor::refreshModelStatus() {
       details << ", held-out ESR " << formatEsr(i.testEsr);
     else if (i.validationEsr >= 0.0)
       details << ", validation ESR " << formatEsr(i.validationEsr);
-    if (i.gear.isNotEmpty())
+    if (const auto credit = agent::Tone3000::creditForSource(i.source);
+        credit.isNotEmpty())
+      details = credit + "\n" + details;
+    else if (i.gear.isNotEmpty())
       details = i.gear + "\n" + details;
     modelDetails.setText(details, juce::dontSendNotification);
     break;
@@ -611,21 +735,26 @@ void EvilAmplifierEditor::refreshModelStatus() {
   }
   modelDetails.setColour(juce::Label::textColourId,
                          status.state == State::error ? gui::colours::accent()
-                                                      : gui::colours::muted);
+                                                      : gui::colours::textSoft);
 }
 
 void EvilAmplifierEditor::refreshIrStatus() {
   irName.setText(audioProcessor.getCab().getDisplayName(),
                  juce::dontSendNotification);
   const auto error = audioProcessor.getLastIrError();
+  if (const auto source = audioProcessor.getCab().getSource();
+      source != creditedIrSource) {
+    creditedIrSource = source;
+    irCredit = agent::Tone3000::creditForSource(source);
+  }
   irDetails.setText(
-      error.isNotEmpty()
-          ? error
-          : juce::String("Zero-latency convolution; IR swaps crossfade"),
+      error.isNotEmpty()      ? error
+      : irCredit.isNotEmpty() ? irCredit
+                              : juce::String("Zero-latency convolution; IR swaps crossfade"),
       juce::dontSendNotification);
   irDetails.setColour(juce::Label::textColourId, error.isNotEmpty()
                                                      ? gui::colours::accent()
-                                                     : gui::colours::muted);
+                                                     : gui::colours::textSoft);
 }
 
 void EvilAmplifierEditor::refreshPresetList() {
@@ -711,8 +840,13 @@ void EvilAmplifierEditor::showBuiltinIrs() {
 }
 
 void EvilAmplifierEditor::showSettings() {
+  std::optional<gui::SettingsPanel::AppActions> app;
+  if (isStandalone())
+    app = gui::SettingsPanel::AppActions{
+        standalone::showAudioSettings, standalone::saveState,
+        standalone::loadState, standalone::resetToDefaultState};
   juce::CallOutBox::launchAsynchronously(
-      std::make_unique<gui::SettingsPanel>(*settings),
+      std::make_unique<gui::SettingsPanel>(std::move(app)),
       settingsButton.getBounds(), &canvas);
 }
 

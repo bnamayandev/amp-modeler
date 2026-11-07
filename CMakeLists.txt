@@ -42,7 +42,8 @@ juce_add_plugin(EvilAmplifier
     NEEDS_MIDI_INPUT FALSE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS TRUE # the agent tab has a text box
+    NEEDS_CURL TRUE # JUCE's only HTTPS on Linux; loaded at runtime, see below
     VST3_CATEGORIES Fx Distortion
     AU_MAIN_TYPE kAudioUnitType_Effect
     MICROPHONE_PERMISSION_ENABLED TRUE
@@ -53,19 +54,32 @@ juce_add_binary_data(EvilAmplifierData
     HEADER_NAME EvilBinaryData.h
     NAMESPACE EvilBinaryData
     SOURCES
-        resources/fonts/Inter-Regular.ttf
-        resources/fonts/Inter-Medium.ttf
-        resources/fonts/JetBrainsMono-Regular.ttf
-        resources/fonts/JetBrainsMono-Medium.ttf
+        resources/fonts/Barlow-Regular.ttf
+        resources/fonts/Barlow-Medium.ttf
+        resources/fonts/BarlowSemiCondensed-SemiBold.ttf
+        resources/fonts/BarlowCondensed-ExtraBoldItalic.ttf
+        resources/fonts/ShareTechMono-Regular.ttf
+        resources/fonts/NewRocker-Regular.ttf
         resources/irs/EvilCab4x12.wav
         resources/models/BlackstarHT1.nam
-        resources/presets/factory_presets.xml)
+        resources/presets/factory_presets.xml
+        resources/brand/TONE3000-logo.png
+        resources/brand/T3K-mark.png)
 set_target_properties(EvilAmplifierData PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # DSP + state code shared by the plugin, the tests and the CLI. An INTERFACE library so each
 # consumer compiles it with its own JUCE module configuration.
 add_library(evil_core INTERFACE)
 target_sources(evil_core INTERFACE
+    source/agent/AgentSettings.cpp
+    source/agent/Http.cpp
+    source/agent/ProcessorAmp.cpp
+    source/agent/Prompt.cpp
+    source/agent/Provider.cpp
+    source/agent/Session.cpp
+    source/agent/ToneMeter.cpp
+    source/agent/Tone3000.cpp
+    source/agent/Tools.cpp
     source/dsp/CabSim.cpp
     source/dsp/Metronome.cpp
     source/dsp/ModelManager.cpp
@@ -86,11 +100,15 @@ target_link_libraries(evil_core INTERFACE
     "$<LINK_LIBRARY:WHOLE_ARCHIVE,nam_core>"
     EvilAmplifierData
     juce::juce_audio_utils
+    juce::juce_cryptography # SHA-256 for the TONE3000 sign-in
     juce::juce_dsp)
 
+# JUCE's built-in Linux sockets have no TLS, so the agent's HTTPS needs libcurl. It's loaded
+# when first used rather than linked, so a machine without it still runs the amp: the agent
+# tab says what's missing. Building needs the headers (libcurl4-openssl-dev).
 set(EVIL_JUCE_DEFINITIONS
     JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
+    JUCE_LOAD_CURL_SYMBOLS_LAZILY=1
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_STRICT_REFCOUNTEDPOINTER=1
     JUCE_MODAL_LOOPS_PERMITTED=0)
@@ -118,12 +136,17 @@ target_sources(EvilAmplifier PRIVATE
     source/PluginProcessor.cpp
     source/PluginEditor.cpp
     source/PipeWireJack.cpp
+    source/StandaloneApp.cpp
+    source/gui/AgentPage.cpp
     source/gui/EvilLookAndFeel.cpp
+    source/gui/Hardware.cpp
     source/gui/PedalBoard.cpp
     source/gui/Settings.cpp
     source/gui/TunerPage.cpp
     source/gui/Widgets.cpp)
-target_compile_definitions(EvilAmplifier PUBLIC ${EVIL_JUCE_DEFINITIONS})
+target_compile_definitions(EvilAmplifier PUBLIC
+    ${EVIL_JUCE_DEFINITIONS}
+    JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1) # source/StandaloneApp.cpp: no title bar
 target_link_libraries(EvilAmplifier
     PRIVATE
         evil_core
@@ -140,7 +163,7 @@ endif()
 
 # --- CLI: offline render, CPU benchmark, model/IR checks -------------------------------------
 if(EVIL_BUILD_TOOLS)
-    juce_add_console_app(evil-cli PRODUCT_NAME "evil-cli")
+    juce_add_console_app(evil-cli PRODUCT_NAME "evil-cli" NEEDS_CURL TRUE)
     target_sources(evil-cli PRIVATE tools/evil_cli.cpp)
     target_compile_definitions(evil-cli PRIVATE ${EVIL_JUCE_DEFINITIONS})
     target_link_libraries(evil-cli
@@ -151,13 +174,16 @@ if(EVIL_BUILD_TOOLS)
             juce::juce_recommended_warning_flags)
 
     # Renders the editor offscreen to PNG (docs, CI artefacts, layout checks).
-    juce_add_console_app(evil-snapshot PRODUCT_NAME "evil-snapshot")
+    juce_add_console_app(evil-snapshot PRODUCT_NAME "evil-snapshot" NEEDS_CURL TRUE)
     target_sources(evil-snapshot PRIVATE
         tools/evil_snapshot.cpp
         source/PluginProcessor.cpp
         source/PluginEditor.cpp
         source/PipeWireJack.cpp
+        source/StandaloneApp.cpp
+        source/gui/AgentPage.cpp
         source/gui/EvilLookAndFeel.cpp
+        source/gui/Hardware.cpp
         source/gui/PedalBoard.cpp
         source/gui/Settings.cpp
         source/gui/TunerPage.cpp

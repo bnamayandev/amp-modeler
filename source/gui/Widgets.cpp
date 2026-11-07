@@ -3,21 +3,32 @@
 #include "EvilLookAndFeel.h"
 
 namespace evil::gui {
+void ignoreTextWithoutNumber(juce::Slider &slider) {
+  slider.valueFromTextFunction = [&slider, parse = slider.valueFromTextFunction](
+                                     const juce::String &text) {
+    return text.containsAnyOf("0123456789") ? parse(text) : slider.getValue();
+  };
+}
+
 Knob::Knob(juce::AudioProcessorValueTreeState &state,
-           const juce::String &parameterId, const juce::String &titleText)
+           const juce::String &parameterId, const juce::String &titleText,
+           Size sizeToUse)
     : slider(juce::Slider::RotaryHorizontalVerticalDrag,
              juce::Slider::TextBoxBelow),
-      attachment(state, parameterId, slider) {
+      attachment(state, parameterId, slider), size(sizeToUse) {
   title.setText(titleText.toUpperCase(), juce::dontSendNotification);
-  title.setFont(caption());
-  title.setColour(juce::Label::textColourId, colours::muted);
+  title.setFont(size == Size::pedal ? silk(10.0f, 0.06f) : silk(12.0f, 0.11f));
+  title.setColour(juce::Label::textColourId, colours::text);
   title.setJustificationType(juce::Justification::centred);
   title.setInterceptsMouseClicks(false, false);
   addAndMakeVisible(title);
 
+  if (size == Size::pedal)
+    setCompact(slider);
   slider.setRotaryParameters(juce::degreesToRadians(225.0f),
                              juce::degreesToRadians(495.0f), true);
-  slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 18);
+  slider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80,
+                         size == Size::pedal ? 14 : 18);
   slider.setColour(juce::Slider::textBoxOutlineColourId,
                    juce::Colours::transparentBlack);
   slider.setPopupDisplayEnabled(false, false, nullptr);
@@ -25,18 +36,28 @@ Knob::Knob(juce::AudioProcessorValueTreeState &state,
     slider.setDoubleClickReturnValue(true,
                                      p->convertFrom0to1(p->getDefaultValue()));
   slider.setTooltip(titleText + " (double-click to reset)");
+  ignoreTextWithoutNumber(slider);
   addAndMakeVisible(slider);
 }
 
+void Knob::setInk(juce::Colour ink) {
+  title.setColour(juce::Label::textColourId, ink);
+  slider.setColour(juce::Slider::textBoxTextColourId, ink);
+  slider.setColour(juce::Slider::rotarySliderOutlineColourId, ink.withAlpha(0.32f));
+}
+
 void Knob::resized() {
+  const bool pedal = size == Size::pedal;
   auto b = getLocalBounds();
-  title.setBounds(b.removeFromTop(16));
+  title.setBounds(b.removeFromTop(pedal ? 13 : 16));
   // Keep knobs a consistent size however big their panel is.
-  constexpr int textHeight = 20, maxDiameter = 104;
+  const int textHeight = pedal ? 14 : 20;
   const int diameter =
       juce::jmin(b.getWidth(), b.getHeight() - textHeight, maxDiameter);
-  slider.setBounds(
-      b.withSizeKeepingCentre(juce::jmax(diameter, 84), diameter + textHeight));
+  // No wider than this component, which would cut off the sides of the value box.
+  slider.setBounds(b.withSizeKeepingCentre(
+      juce::jmin(b.getWidth(), juce::jmax(diameter, pedal ? 46 : 84)),
+      diameter + textHeight));
 }
 
 Fader::Fader(juce::AudioProcessorValueTreeState &state,
@@ -48,9 +69,9 @@ Fader::Fader(juce::AudioProcessorValueTreeState &state,
     addAndMakeVisible(l);
   }
   title.setText(titleText.toUpperCase(), juce::dontSendNotification);
-  title.setFont(caption());
-  title.setColour(juce::Label::textColourId, colours::muted);
-  value.setFont(mono(10.5f));
+  title.setFont(silk(11.5f, 0.07f));
+  title.setColour(juce::Label::textColourId, colours::text);
+  value.setFont(readout(12.0f));
 
   // Compact, to fit a narrow column: "+3.5", "0.0", "-10.0".
   slider.onValueChange = [this] {
@@ -59,7 +80,7 @@ Fader::Fader(juce::AudioProcessorValueTreeState &state,
     value.setText((v >= 0.05 ? "+" : "") + juce::String(flat ? 0.0 : v, 1),
                   juce::dontSendNotification);
     value.setColour(juce::Label::textColourId,
-                    flat ? colours::mutedSoft : colours::textSoft);
+                    flat ? colours::muted : colours::accent());
   };
   slider.onValueChange();
   slider.setPopupDisplayEnabled(false, false, nullptr);
@@ -88,43 +109,27 @@ void LevelMeter::pushPeak(float peakGain, float secondsSinceLast) {
 }
 
 void LevelMeter::paint(juce::Graphics &g) {
-  constexpr float minDb = -60.0f, maxDb = 6.0f;
+  constexpr float minDb = -60.0f, maxDb = 6.0f, hotDb = -6.0f, warmDb = -18.0f;
+  constexpr float pitch = 4.0f, segment = 3.0f; // one LED every 4 px
   auto bounds = getLocalBounds().toFloat();
-  const auto clipLed = bounds.removeFromTop(4.0f);
-  bounds.removeFromTop(5.0f);
+  auto clipLed = bounds.removeFromTop(6.0f);
+  bounds.removeFromTop(4.0f);
 
-  if (clipped) {
-    g.setColour(colours::accent().withAlpha(0.35f));
-    g.fillRoundedRectangle(clipLed.expanded(2.0f), 3.0f);
+  drawLed(g, clipLed.withSizeKeepingCentre(6.0f, 6.0f), clipped, colours::accent());
+
+  drawRecess(g, bounds, 2.0f);
+  const auto ladder = bounds.reduced(2.0f);
+  const int count = (int)(ladder.getHeight() / pitch);
+  for (int i = 0; i < count; ++i) {
+    const float top = ladder.getBottom() - pitch * (float)(i + 1) + (pitch - segment);
+    const float db = juce::jmap((float)i + 0.5f, 0.0f, (float)count, minDb, maxDb);
+    const auto led = juce::Rectangle<float>(ladder.getX(), top, ladder.getWidth(), segment);
+    const auto colour = db >= hotDb    ? colours::accent()
+                        : db >= warmDb ? colours::text
+                                       : colours::textSoft.interpolatedWith(juce::Colours::black, 0.18f);
+    g.setColour(db <= levelDb ? colour : colour.withAlpha(0.08f));
+    g.fillRect(led);
   }
-  g.setColour(clipped ? colours::accent() : colours::lineSoft);
-  g.fillRoundedRectangle(clipLed, 2.0f);
-
-  g.setColour(colours::lineSoft);
-  g.fillRoundedRectangle(bounds, 2.0f);
-
-  const auto toY = [&](float db) {
-    return juce::jmap(juce::jlimit(minDb, maxDb, db), minDb, maxDb,
-                      bounds.getBottom(), bounds.getY());
-  };
-  const auto top = toY(levelDb);
-  if (top < bounds.getBottom()) {
-    // Neutral up to -6 dBFS; only the hot zone uses the accent.
-    juce::ColourGradient fill(colours::mutedSoft, 0.0f, bounds.getBottom(),
-                              colours::text, 0.0f, toY(-6.0f), false);
-    g.setGradientFill(fill);
-    const auto bar = bounds.withTop(top);
-    g.fillRoundedRectangle(bar, 2.0f);
-    const auto hot = bar.withBottom(juce::jmax(bar.getY(), toY(-6.0f)));
-    if (!hot.isEmpty()) {
-      g.setColour(colours::accent());
-      g.fillRect(hot);
-    }
-  }
-
-  g.setColour(colours::panel);
-  for (float db : {0.0f, -12.0f, -24.0f, -36.0f, -48.0f})
-    g.fillRect(bounds.getX(), toY(db), bounds.getWidth(), 1.0f);
 }
 
 Spectrum::Spectrum(double low, double high) : lowHz(low), highHz(high) {
@@ -194,114 +199,144 @@ void Spectrum::refresh(double sampleRate, float secondsSinceLast) {
 }
 
 void Spectrum::paint(juce::Graphics &g) {
+  using namespace colours;
   const auto bounds = getLocalBounds().toFloat();
+  // The EQ's scale runs between where a fader's cap can reach.
+  constexpr float trackInset = 12.0f;
+
+  graticule.draw(g, getLocalBounds(), juce::roundToInt(scaleDb * 10.0),
+                 [this, bounds](juce::Graphics &c) {
+    drawRecess(c, bounds, 3.0f);
+    const auto columns = (float)juce::jmax(1, (int)bands.size());
+    c.setColour(line.withAlpha(0.05f));
+    for (float i = 1.0f; i < columns; i += 1.0f)
+      c.fillRect(bounds.getX() + bounds.getWidth() * i / columns, bounds.getY() + 1.0f,
+                 1.0f, bounds.getHeight() - 2.0f);
+    const auto scale = bounds.reduced(0.0f, trackInset);
+    c.setFont(readout(8.5f));
+    for (int step = -2; step <= 2; ++step) {
+      const float y = scale.getY() + scale.getHeight() * ((float)step + 2.0f) * 0.25f;
+      c.setColour(line.withAlpha(step == 0 ? 0.13f : 0.05f));
+      c.fillRect(bounds.getX() + 1.0f, y - 0.5f, bounds.getWidth() - 2.0f, 1.0f);
+      if (step % 2 == 0) {
+        const int db = juce::roundToInt(scaleDb * (float)-step * 0.5f);
+        c.setColour(mutedSoft);
+        c.drawText((db > 0 ? "+" : "") + juce::String(db),
+                   juce::Rectangle<float>(bounds.getX() + 5.0f, y - 12.0f, 24.0f, 11.0f),
+                   juce::Justification::centredLeft, false);
+      }
+    }
+  });
+
+  const auto inner = bounds.reduced(1.0f);
+  const bool hearing = std::any_of(levelsDb.begin(), levelsDb.end(),
+                                   [](float level) { return level > floorDb + 0.5f; });
+  juce::Path clip;
+  clip.addRoundedRectangle(inner, 2.0f);
+  const juce::Graphics::ScopedSaveState save(g);
+  g.reduceClipRegion(clip);
+
   const auto point = [&](int p) {
     return juce::Point<float>(
-        juce::jmap((float)p, 0.0f, (float)(numPoints - 1), bounds.getX(),
-                   bounds.getRight()),
-        juce::jmap(levelsDb[(size_t)p], floorDb, topDb, bounds.getBottom(),
-                   bounds.getY()));
+        juce::jmap((float)p, 0.0f, (float)(numPoints - 1), inner.getX(),
+                   inner.getRight()),
+        juce::jmap(levelsDb[(size_t)p], floorDb, topDb, inner.getBottom(),
+                   inner.getY()));
   };
 
-  // Smooth: quadratic segments through the midpoints between points.
-  juce::Path curve;
-  curve.startNewSubPath(point(0));
-  for (int p = 1; p < numPoints - 1; ++p) {
-    const auto here = point(p), next = point(p + 1);
-    curve.quadraticTo(here, (here + next) * 0.5f);
-  }
-  curve.lineTo(point(numPoints - 1));
+  if (hearing) {
+    // Smooth: quadratic segments through the midpoints between points.
+    juce::Path curve;
+    curve.startNewSubPath(point(0));
+    for (int p = 1; p < numPoints - 1; ++p) {
+      const auto here = point(p), next = point(p + 1);
+      curve.quadraticTo(here, (here + next) * 0.5f);
+    }
+    curve.lineTo(point(numPoints - 1));
 
-  auto fill = curve;
-  fill.lineTo(bounds.getBottomRight());
-  fill.lineTo(bounds.getBottomLeft());
-  fill.closeSubPath();
-  g.setGradientFill(juce::ColourGradient(
-      colours::text.withAlpha(0.10f), 0.0f, bounds.getY(),
-      colours::text.withAlpha(0.02f), 0.0f, bounds.getBottom(), false));
-  g.fillPath(fill);
-  g.setColour(colours::muted.withAlpha(0.55f));
-  g.strokePath(curve, juce::PathStrokeType(1.0f));
+    auto fill = curve;
+    fill.lineTo(bounds.getBottomRight());
+    fill.lineTo(bounds.getBottomLeft());
+    fill.closeSubPath();
+    g.setGradientFill(juce::ColourGradient(accent().withAlpha(0.46f), 0.0f, inner.getY(),
+                                           accent().withAlpha(0.03f), 0.0f, inner.getBottom(),
+                                           false));
+    g.fillPath(fill);
+    g.setColour(accent().withAlpha(0.22f));
+    g.strokePath(curve, juce::PathStrokeType(3.0f));
+    g.setColour(accent().interpolatedWith(juce::Colours::white, 0.12f).withAlpha(0.9f));
+    g.strokePath(curve, juce::PathStrokeType(1.1f));
+  }
+
+  // The EQ's shape, through the fader caps and out flat past the ends.
+  if (!bands.empty()) {
+    const auto scale = bounds.reduced(0.0f, trackInset);
+    const auto bandPoint = [&](size_t i) {
+      return juce::Point<float>(
+          bounds.getX() + bounds.getWidth() * ((float)i + 0.5f) / (float)bands.size(),
+          scale.getBottom() - scale.getHeight() * bands[i]);
+    };
+    juce::Path shape;
+    shape.startNewSubPath(bounds.getX(), bandPoint(0).y);
+    shape.lineTo(bandPoint(0));
+    for (size_t i = 1; i + 1 < bands.size(); ++i) {
+      const auto here = bandPoint(i), next = bandPoint(i + 1);
+      shape.quadraticTo(here, (here + next) * 0.5f);
+    }
+    shape.lineTo(bandPoint(bands.size() - 1));
+    shape.lineTo(bounds.getRight(), bandPoint(bands.size() - 1).y);
+    g.setColour(text.withAlpha(0.1f));
+    g.strokePath(shape, juce::PathStrokeType(3.0f));
+    g.setColour(text.withAlpha(0.55f));
+    g.strokePath(shape, juce::PathStrokeType(1.1f));
+  }
 }
 
 void Footswitch::paintButton(juce::Graphics &g, bool highlighted, bool down) {
-  using namespace colours;
-  const bool on = getToggleState();
-  const auto size =
-      (float)juce::jmin(getWidth(), getHeight()) - 2.0f;
-  const auto outer =
-      juce::Rectangle<float>(size, size).withCentre(getLocalBounds().toFloat().getCentre());
+  const auto size = juce::jmin(getWidth(), getHeight());
+  const auto at = getLocalBounds().toFloat().getCentre().translated(
+      -(float)size * 0.5f, -(float)size * 0.5f);
+  (down ? pressed : up).draw(g, at, size, size, 0, [size, down](juce::Graphics &c) {
+    const auto centre = juce::Point<float>((float)size, (float)size) * 0.5f;
+    const float nut = (float)size * 0.43f;
 
-  // Hairline bezel, accent when engaged.
-  g.setColour(on ? colours::accent().withAlpha(highlighted ? 0.9f : 0.7f)
-              : highlighted ? muted.withAlpha(0.7f)
-                            : line);
-  g.drawEllipse(outer.reduced(0.5f), 1.0f);
+    // The shadow it throws on the enclosure.
+    juce::ColourGradient shadow(juce::Colours::black.withAlpha(0.65f),
+                                centre.translated(0.0f, 2.0f),
+                                juce::Colours::black.withAlpha(0.0f),
+                                centre.translated(nut + 2.0f, 2.0f), true);
+    shadow.addColour(0.8, juce::Colours::black.withAlpha(0.5f));
+    c.setGradientFill(shadow);
+    c.fillEllipse(circle(centre.translated(0.0f, 2.0f), nut + 2.0f));
 
-  // The cap: paper colour with a soft top light, pressed in while held.
-  const auto cap = outer.reduced(size * (down ? 0.2f : 0.17f));
-  g.setGradientFill(juce::ColourGradient(
-      background.brighter(down ? 0.04f : 0.12f), cap.getCentreX(), cap.getY(),
-      background.darker(0.2f), cap.getCentreX(), cap.getBottom(), false));
-  g.fillEllipse(cap);
-  g.setColour(highlighted ? muted.withAlpha(0.6f) : line);
-  g.drawEllipse(cap.reduced(0.5f), 1.0f);
-}
+    // The hex nut.
+    juce::Path hex;
+    hex.addPolygon(centre, 6, nut, juce::MathConstants<float>::pi / 6.0f);
+    juce::ColourGradient nutFill(juce::Colour(0xff9c9ca2), centre.x - nut, centre.y - nut,
+                                 juce::Colour(0xff222225), centre.x + nut, centre.y + nut,
+                                 false);
+    nutFill.addColour(0.5, juce::Colour(0xff515156));
+    c.setGradientFill(nutFill);
+    c.fillPath(hex);
+    c.setColour(juce::Colours::black.withAlpha(0.65f));
+    c.strokePath(hex, juce::PathStrokeType(0.9f));
 
-void drawLed(juce::Graphics &g, juce::Rectangle<float> led, bool lit,
-             juce::Colour colour) {
-  if (lit) {
-    g.setGradientFill(juce::ColourGradient(
-        colour.withAlpha(0.55f), led.getCentre(), colour.withAlpha(0.0f),
-        led.getCentre().translated(led.getWidth() * 1.25f, 0.0f), true));
-    g.fillEllipse(led.expanded(led.getWidth() * 0.75f));
+    // The plunger: a chrome dome, sitting lower while it's held.
+    const float dome = nut * (down ? 0.68f : 0.74f);
+    c.setColour(juce::Colours::black.withAlpha(0.75f));
+    c.fillEllipse(circle(centre.translated(0.0f, 0.8f), dome + 1.2f));
+    juce::ColourGradient chrome(juce::Colours::white, centre.translated(-dome * 0.3f, -dome * 0.45f),
+                                juce::Colour(0xff17171a), centre.translated(dome * 0.7f, dome * 0.95f),
+                                true);
+    chrome.addColour(0.35, juce::Colour(0xffb6b6bc));
+    chrome.addColour(0.72, juce::Colour(0xff44444a));
+    chrome.addColour(0.9, juce::Colour(0xff8c8c92));
+    c.setGradientFill(chrome);
+    c.fillEllipse(circle(centre, dome));
+  });
+  if (highlighted) {
+    g.setColour(juce::Colours::white.withAlpha(0.1f));
+    g.fillEllipse(circle(getLocalBounds().toFloat().getCentre(), (float)size * 0.32f));
   }
-  g.setColour(lit ? colour : colours::lineSoft);
-  g.fillEllipse(led);
-  if (!lit) {
-    g.setColour(colours::line);
-    g.drawEllipse(led.reduced(0.5f), 1.0f);
-  }
-}
-
-juce::Rectangle<float> drawPanel(juce::Graphics &g, juce::Rectangle<int> bounds,
-                                 int number, const juce::String &title) {
-  using namespace colours;
-  const auto b = bounds.toFloat();
-  g.setColour(panel);
-  g.fillRoundedRectangle(b, 10.0f);
-  g.setColour(line);
-  g.drawRoundedRectangle(b.reduced(0.5f), 10.0f, 1.0f);
-
-  // Section header:  01  [ title ]  ------------------------------
-  auto row = b.reduced(16.0f, 0.0f).withTop(b.getY() + 14.0f).withHeight(20.0f);
-  if (number > 0) {
-    const auto numberFont = mono(11.0f);
-    const auto numberText = juce::String(number).paddedLeft('0', 2);
-    g.setFont(numberFont);
-    g.setColour(accent());
-    g.drawText(numberText,
-               row.removeFromLeft(juce::GlyphArrangement::getStringWidth(
-                                      numberFont, numberText) +
-                                  1.0f),
-               juce::Justification::centredLeft, false);
-    row.removeFromLeft(10.0f);
-  }
-
-  const auto titleFont = mono(10.5f, true, 0.1f);
-  const auto titleText = title.toLowerCase();
-  const auto pill = row.removeFromLeft(
-      juce::GlyphArrangement::getStringWidth(titleFont, titleText) + 18.0f);
-  g.setColour(accent().withAlpha(0.28f));
-  g.fillRect(pill);
-  g.setColour(text);
-  g.setFont(titleFont);
-  g.drawText(titleText, pill.withTrimmedLeft(9.0f),
-             juce::Justification::centredLeft, false);
-  row.removeFromLeft(12.0f);
-
-  g.setColour(line);
-  g.fillRect(row.withSizeKeepingCentre(row.getWidth(), 1.0f));
-  return row;
 }
 } // namespace evil::gui

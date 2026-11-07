@@ -23,6 +23,58 @@ inline double audioTaper(double knob) noexcept {
   return (std::pow(base, std::clamp(knob, 0.0, 1.0)) - 1.0) / (base - 1.0);
 }
 
+/** Fraction of a pot's resistance at knob position 0..1, for a pot measured or
+   specified at noonFraction at noon: an exponential law, as tapered pots
+   approximate. 0.5 would be linear. */
+inline double potTaper(double knob, double noonFraction) noexcept {
+  const double root = (1.0 - noonFraction) / noonFraction;
+  const double base = root * root;
+  if (std::abs(base - 1.0) < 1.0e-6)
+    return std::clamp(knob, 0.0, 1.0);
+  return (std::pow(base, std::clamp(knob, 0.0, 1.0)) - 1.0) / (base - 1.0);
+}
+
+/** The knob position that gives this fraction: the inverse of potTaper. */
+inline double potPosition(double fraction, double noonFraction) noexcept {
+  const double root = (1.0 - noonFraction) / noonFraction;
+  const double base = root * root;
+  if (std::abs(base - 1.0) < 1.0e-6)
+    return std::clamp(fraction, 0.0, 1.0);
+  return std::clamp(std::log(1.0 + std::max(fraction, 0.0) * (base - 1.0)) / std::log(base),
+                    0.0, 1.0);
+}
+
+/** Output level knobs, in dB, at their real pots' positions. Each is its pedal's
+   output with the pot fully up (maxDb, relative to about unity on a guitar) and
+   its fraction at noon. Measured on real pedals for the overdrive: two Tube
+   Screamers are 7 to 8 dB down at noon, nothing like a textbook audio pot. */
+struct LevelKnob {
+  double maxDb, noonFraction;
+  static constexpr double minDb = -60.0;
+  double dbAt(double knob) const noexcept {
+    const double fraction = potTaper(knob, noonFraction);
+    return fraction <= 0.0 ? minDb
+                           : std::max(minDb, maxDb + 20.0 * std::log10(fraction));
+  }
+  double positionOf(double db) const noexcept {
+    return db <= minDb ? 0.0
+                       : potPosition(std::pow(10.0, (db - maxDb) / 20.0), noonFraction);
+  }
+};
+inline constexpr LevelKnob overdriveLevel{3.9, 0.42}; // measured: see TestPedals
+inline constexpr LevelKnob distortionVolume{3.5, 0.3};
+inline constexpr LevelKnob fuzzVolume{6.0, 0.3};
+inline constexpr LevelKnob compressorOutput{12.0, 0.2512}; // 0 dB at noon
+
+/** MXR Micro Amp: a non-inverting op-amp stage, unity to 26 dB (20 times), with
+   the pot in its feedback. */
+inline double boostDbAt(double knob) noexcept {
+  return 20.0 * std::log10(1.0 + 19.0 * audioTaper(knob));
+}
+inline double boostPositionOf(double db) noexcept {
+  return potPosition((std::pow(10.0, db / 20.0) - 1.0) / 19.0, 0.15);
+}
+
 /** Corner frequency of an RC filter, in Hz. */
 inline constexpr double cornerHz(double ohms, double farads) noexcept {
   return 1.0 / (2.0 * 3.14159265358979323846 * ohms * farads);

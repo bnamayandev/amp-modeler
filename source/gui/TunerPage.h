@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Hardware.h"
 #include "dsp/PitchDetector.h"
 #include "state/Tunings.h"
 
@@ -49,6 +50,7 @@ private:
   void paintGauge(juce::Graphics &);
   void paintStats(juce::Graphics &);
   void paintStrings(juce::Graphics &);
+  void paintStringsFixed(juce::Graphics &);
 
   juce::SharedResourcePointer<tuning::TuningLibrary> library;
   PitchDetector detector;
@@ -64,7 +66,8 @@ private:
       autoButton{"auto"};
   std::array<StringRow, (std::size_t)tuning::numStrings> rows;
 
-  juce::Rectangle<int> meterPanel, stringsPanel, captionArea, noteArea,
-      hintArea, gaugeArea, statsArea, headerArea, footHintArea;
+  juce::Rectangle<int> meterPanel, stringsPanel, displayArea, captionArea, noteArea,
+      hintArea, gaugeWell, gaugeArea, statsArea, headerArea, footHintArea;
+  PaintCache frame, noteCache;
 };
 } // namespace evil::gui

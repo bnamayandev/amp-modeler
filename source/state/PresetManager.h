@@ -33,10 +33,12 @@ public:
   bool saveUserPreset(const juce::String &name, juce::String &error);
   void refreshUserPresets();
 
-private:
+  /** The sound as it is now, in preset form, and putting one back. The agent's
+      undo uses these without touching the preset list. */
   std::unique_ptr<juce::XmlElement> capture(const juce::String &name) const;
   void apply(const juce::XmlElement &preset);
 
+private:
   juce::AudioProcessorValueTreeState &state;
   std::function<Sources()> getSources;
   std::function<void(const Sources &)> applySources;

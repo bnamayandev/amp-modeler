@@ -1,5 +1,7 @@
 #include "Parameters.h"
 
+#include "dsp/AnalogStages.h"
+
 namespace evil::params {
 namespace {
 using Float = juce::AudioParameterFloat;
@@ -14,7 +16,7 @@ juce::AudioParameterFloatAttributes decibels() {
 }
 
 juce::NormalisableRange<float> range(float lo, float hi, float centre) {
-  juce::NormalisableRange<float> r(lo, hi, 0.01f);
+  juce::NormalisableRange<float> r(lo, hi, 0.001f);
   r.setSkewForCentre(centre);
   return r;
 }
@@ -37,10 +39,25 @@ juce::NormalisableRange<float> parabolic(float maxDb) {
           }};
 }
 
-/** Unitless pedal knob shown 0-10. */
+/** A level in dB whose knob follows the real pedal's output pot, so a position on
+   this knob is that position on the pedal. Knob 0 is as near silent as a pot gets. */
+juce::NormalisableRange<float> levelPot(const analog::LevelKnob &pot) {
+  return {(float)analog::LevelKnob::minDb, (float)pot.maxDb,
+          [pot](float, float, float x) { return (float)pot.dbAt(x); },
+          [pot](float, float, float v) { return (float)pot.positionOf(v); },
+          [](float lo, float hi, float v) {
+            return juce::jlimit(lo, hi, std::round(v * 100.0f) / 100.0f);
+          }};
+}
+
+/** Unitless pedal knob shown 0-10. It reads typed text the same way: left to JUCE,
+   a typed 3.5 is the stored value, which clamps to the top of 0-1. */
 juce::AudioParameterFloatAttributes zeroToTen() {
-  return juce::AudioParameterFloatAttributes().withStringFromValueFunction(
-      [](float v, int) { return juce::String(v * 10.0f, 1); });
+  return juce::AudioParameterFloatAttributes()
+      .withStringFromValueFunction(
+          [](float v, int) { return juce::String(v * 10.0f, 1); })
+      .withValueFromStringFunction(
+          [](const juce::String &text) { return text.getFloatValue() / 10.0f; });
 }
 
 juce::AudioParameterFloatAttributes hertz() {
@@ -49,8 +66,12 @@ juce::AudioParameterFloatAttributes hertz() {
 }
 
 juce::AudioParameterFloatAttributes percent() {
-  return juce::AudioParameterFloatAttributes().withLabel("%").withStringFromValueFunction(
-      [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; });
+  return juce::AudioParameterFloatAttributes()
+      .withLabel("%")
+      .withStringFromValueFunction(
+          [](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)) + "%"; })
+      .withValueFromStringFunction(
+          [](const juce::String &text) { return text.getFloatValue() / 100.0f; });
 }
 
 void addUnit(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
@@ -62,11 +83,20 @@ void addUnit(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
       std::move(attributes)));
 }
 
-void addLevel(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
+/** A boost's bass or treble: +/-12 dB, flat at noon. */
+void addShelf(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
               const char *id, const juce::String &name) {
   layout.add(std::make_unique<Float>(
       juce::ParameterID{id, 1}, name,
       juce::NormalisableRange<float>(-12.0f, 12.0f, 0.01f), 0.0f, decibels()));
+}
+
+/** An output level, starting at noon on its pot. */
+void addLevel(juce::AudioProcessorValueTreeState::ParameterLayout &layout,
+              const char *id, const juce::String &name, const analog::LevelKnob &pot) {
+  layout.add(std::make_unique<Float>(juce::ParameterID{id, 1}, name, levelPot(pot),
+                                     (float)std::round(pot.dbAt(0.5) * 100.0) / 100.0f,
+                                     decibels()));
 }
 
 std::atomic<float> *raw(juce::AudioProcessorValueTreeState &s, const char *id) {
@@ -112,36 +142,59 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
   addUnit(layout, wahResonance, "Wah Resonance", 0.5f);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{compOn, 1}, "Compressor", false));
-  addUnit(layout, compSustain, "Comp Sustain", 0.5f);
+  addUnit(layout, compSustain, "Comp Sensitivity", 0.5f);
   addUnit(layout, compBlend, "Comp Blend", 1.0f, percent());
-  addLevel(layout, compLevel, "Comp Level");
+  addLevel(layout, compLevel, "Comp Output", analog::compressorOutput);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{fuzzOn, 1}, "Fuzz", false));
-  addUnit(layout, fuzzAmount, "Fuzz", 0.7f);
+  addUnit(layout, fuzzAmount, "Fuzz Sustain", 0.5f);
   addUnit(layout, fuzzTone, "Fuzz Tone", 0.5f);
-  addLevel(layout, fuzzLevel, "Fuzz Level");
+  addLevel(layout, fuzzLevel, "Fuzz Volume", analog::fuzzVolume);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{odOn, 1}, "Overdrive Pedal", false));
   addUnit(layout, odDrive, "OD Drive", 0.5f);
   addUnit(layout, odTone, "OD Tone", 0.5f);
-  addLevel(layout, odLevel, "OD Level");
+  addLevel(layout, odLevel, "OD Level", analog::overdriveLevel);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{distOn, 1}, "Distortion", false));
-  addUnit(layout, distAmount, "Distortion", 0.6f);
-  addUnit(layout, distTone, "Dist Tone", 0.5f);
-  addLevel(layout, distLevel, "Dist Level");
+  addUnit(layout, distAmount, "Distortion", 0.5f);
+  // Stored as 0 dark .. 1 bright, as it always has been, but the knob is a real
+  // RAT's Filter: darker clockwise, and 0-10 up the way the pointer goes.
+  layout.add(std::make_unique<Float>(
+      juce::ParameterID{distTone, 1}, "Dist Filter",
+      juce::NormalisableRange<float>(
+          0.0f, 1.0f, [](float, float, float x) { return 1.0f - x; },
+          [](float, float, float v) { return 1.0f - v; },
+          [](float, float, float v) {
+            return juce::jlimit(0.0f, 1.0f, std::round(v * 1000.0f) / 1000.0f);
+          }),
+      0.5f,
+      juce::AudioParameterFloatAttributes()
+          .withStringFromValueFunction(
+              [](float v, int) { return juce::String((1.0f - v) * 10.0f, 1); })
+          .withValueFromStringFunction([](const juce::String &text) {
+            return 1.0f - text.getFloatValue() / 10.0f;
+          })));
+  addLevel(layout, distLevel, "Dist Volume", analog::distortionVolume);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{boostOn, 1}, "Boost", false));
   layout.add(std::make_unique<Float>(
       juce::ParameterID{boostGain, 1}, "Boost Gain",
-      juce::NormalisableRange<float>(0.0f, 20.0f, 0.01f), 9.0f, decibels()));
-  addLevel(layout, boostBass, "Boost Bass");
-  addLevel(layout, boostTreble, "Boost Treble");
+      juce::NormalisableRange<float>(
+          0.0f, (float)analog::boostDbAt(1.0),
+          [](float, float, float x) { return (float)analog::boostDbAt(x); },
+          [](float, float, float v) { return (float)analog::boostPositionOf(v); },
+          [](float lo, float hi, float v) {
+            return juce::jlimit(lo, hi, std::round(v * 100.0f) / 100.0f);
+          }),
+      (float)std::round(analog::boostDbAt(0.5) * 100.0) / 100.0f, decibels()));
+  addShelf(layout, boostBass, "Boost Bass");
+  addShelf(layout, boostTreble, "Boost Treble");
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{phaserOn, 1}, "Phaser", false));
   layout.add(std::make_unique<Float>(juce::ParameterID{phaserRate, 1}, "Phaser Rate",
                                      range(0.05f, 8.0f, 0.8f), 0.5f, hertz()));
-  addUnit(layout, phaserDepth, "Phaser Depth", 0.7f);
+  addUnit(layout, phaserDepth, "Phaser Depth", 1.0f);
   addUnit(layout, phaserFeedback, "Phaser Feedback", 0.3f);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{flangerOn, 1}, "Flanger", false));
@@ -158,9 +211,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{tremOn, 1}, "Tremolo", false));
   layout.add(std::make_unique<Float>(juce::ParameterID{tremRate, 1}, "Tremolo Rate",
-                                     range(0.5f, 15.0f, 4.0f), 5.0f, hertz()));
+                                     range(1.1f, 11.1f, 3.5f), 3.5f, hertz()));
   addUnit(layout, tremDepth, "Tremolo Depth", 0.6f, percent());
-  addUnit(layout, tremShape, "Tremolo Shape", 0.3f);
+  addUnit(layout, tremShape, "Tremolo Wave", 0.0f);
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{delayOn, 1}, "Delay", false));
   layout.add(std::make_unique<Float>(
@@ -170,7 +223,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout() {
           [](float v, int) { return juce::String(juce::roundToInt(v)) + " ms"; })));
   layout.add(std::make_unique<Float>(
       juce::ParameterID{delayFeedback, 1}, "Delay Feedback",
-      juce::NormalisableRange<float>(0.0f, 0.95f, 0.001f), 0.35f, percent()));
+      range(0.0f, 0.95f, 0.55f), 0.35f, percent()));
   addUnit(layout, delayMix, "Delay Mix", 0.35f, percent());
 
   layout.add(std::make_unique<Bool>(juce::ParameterID{reverbOn, 1}, "Reverb", false));

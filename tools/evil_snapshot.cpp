@@ -3,13 +3,20 @@
 //
 //   evil-snapshot <output-directory>
 //
-// Writes editor.png (default size), editor@1.5x.png, stretched.png, which
-// simulates a window manager forcing the window to an odd size, to check the
-// layout scales uniformly, pedals.png: the pedal page with a few pedals on,
-// tuner-idle.png, tuner.png, tuner-in-tune.png and tuner-locked.png: the tuner
+// Writes editor.png (default size), editor@1.5x.png, editor-playing.png: the
+// amp page with a guitar going through it and the EQ moved, editor-violet.png:
+// another accent, stretched.png, which simulates a window manager forcing the
+// window to an odd size, to check the layout scales uniformly, pedals.png and
+// pedals@1x.png: the pedal page with a few pedals on,
+// editor-typing.png and pedals-typing.png: those pages with every value box open
+// for typing, tuner-idle.png, tuner.png, tuner-in-tune.png and tuner-locked.png: the tuner
 // page with a custom tuning, hearing notes played into the processor, and
-// settings.png: the settings popover open, with a blue accent. The saved accent
-// and tuning are ignored, so every shot starts from the default.
+// settings.png: the settings popover open, with a blue accent, app.png and
+// app-settings.png: the header and the popover as the standalone app has them,
+// and agent-keys.png, agent-sign-in.png, agent-empty.png and agent-chat.png: the
+// agent tab, with made-up keys and a made-up conversation. The saved accent,
+// tuning and keys are ignored, so every shot starts from the default and none
+// can show a real key.
 
 #include "PluginEditor.h"
 
@@ -46,6 +53,94 @@ template <typename Type> Type *findChild(juce::Component &root) {
       return found;
   }
   return nullptr;
+}
+
+template <typename Type>
+void findAll(juce::Component &root, std::vector<Type *> &found) {
+  for (auto *child : root.getChildren()) {
+    if (auto *c = dynamic_cast<Type *>(child))
+      found.push_back(c);
+    findAll(*child, found);
+  }
+}
+
+/** Saves a shot with every value box on the page open for typing. */
+bool saveTyping(juce::Component &page, const juce::File &file) {
+  std::vector<juce::Slider *> sliders;
+  findAll(page, sliders);
+  for (auto *slider : sliders)
+    if (slider->getTextBoxPosition() != juce::Slider::NoTextBox)
+      slider->showTextBox();
+  const bool ok = save(page, file, 1.5f);
+  for (auto *slider : sliders)
+    if (slider->getTextBoxPosition() != juce::Slider::NoTextBox)
+      slider->hideTextBox(true);
+  return ok;
+}
+
+/** Saves the amp page as it looks with a guitar going through it and the EQ
+    moved, then puts the EQ back. Nothing's running, so it hands every display
+    what the editor's timer would. */
+bool savePlaying(juce::AudioProcessorEditor &editor,
+                 evil::EvilAmplifierProcessor &processor, const juce::File &file) {
+  auto *spectrum = findChild<evil::gui::Spectrum>(editor);
+  auto *tubes = findChild<evil::gui::TubeBank>(editor);
+  std::vector<evil::gui::LevelMeter *> meters;
+  findAll(editor, meters);
+  if (spectrum == nullptr || tubes == nullptr || meters.size() != 2) {
+    std::cout << "FAILED: no amp page displays" << std::endl;
+    return false;
+  }
+
+  constexpr std::array<float, evil::Equaliser::numBands> curve{
+      3.5f, 2.0f, -1.0f, -3.5f, -2.0f, 1.5f, 4.5f, 3.0f, 1.0f};
+  std::array<float, evil::Equaliser::numBands> bands;
+  auto &state = processor.getState();
+  for (size_t b = 0; b < bands.size(); ++b) {
+    auto *param = state.getParameter(evil::params::eqBands[b]);
+    param->setValueNotifyingHost(param->convertTo0to1(curve[b]));
+    bands[b] = param->getValue();
+  }
+  spectrum->setBands(bands, (double)evil::Equaliser::maxGainDb);
+
+  // A distorted chord: its harmonics, over the hash an amp and a cab leave.
+  constexpr double rate = 48000.0;
+  constexpr int block = 4096;
+  std::array<float, block> samples;
+  juce::Random noise(7);
+  double hash = 0.0;
+  int position = 0;
+  for (int tick = 0; tick < 12; ++tick) {
+    for (auto &sample : samples) {
+      const double t = position++ / rate;
+      double v = 0.0;
+      for (const double root : {82.4, 123.5, 164.8})
+        for (int k = 1; k <= 24; ++k)
+          v += 0.08 / std::pow((double)k, 1.1) *
+               std::sin(juce::MathConstants<double>::twoPi * root * k * t + k);
+      hash += 0.25 * ((noise.nextDouble() * 2.0 - 1.0) - hash);
+      sample = (float)(v + 0.09 * hash);
+    }
+    spectrum->push(samples.data(), block);
+    spectrum->refresh(rate, 1.0f / 30.0f);
+  }
+  meters[0]->pushPeak(0.35f, 1.0f / 30.0f);
+  meters[1]->pushPeak(0.95f, 1.0f / 30.0f);
+  tubes->snapTo(true, 0.85f);
+
+  const bool ok = save(editor, file, 1.5f);
+
+  tubes->snapTo(true, 0.0f);
+  meters[0]->pushPeak(0.0f, 100.0f);
+  meters[1]->pushPeak(0.0f, 100.0f);
+  for (size_t b = 0; b < bands.size(); ++b) {
+    auto *param = state.getParameter(evil::params::eqBands[b]);
+    param->setValueNotifyingHost(param->getDefaultValue());
+    bands[b] = param->getValue();
+  }
+  spectrum->setBands(bands, (double)evil::Equaliser::maxGainDb);
+  spectrum->refresh(rate, 100.0f); // no fresh samples: the curve sinks away
+  return ok;
 }
 
 /** Plays a plucked note through the processor and hands what comes out of its
@@ -92,6 +187,11 @@ int main(int argc, char **argv) {
   juce::SharedResourcePointer<evil::gui::Settings> settings;
   evil::gui::colours::setAccentHue(evil::gui::colours::defaultAccentHue);
 
+  // Before anything reads it, so the player's real keys never get near a shot.
+  juce::SharedResourcePointer<evil::agent::AgentSettings> agentSettings;
+  const juce::TemporaryFile agentFile(".xml");
+  agentSettings->useFile(agentFile.getFile());
+
   evil::EvilAmplifierProcessor processor;
   processor.prepareToPlay(48000.0, 128);
 
@@ -106,6 +206,8 @@ int main(int argc, char **argv) {
 
   bool ok = save(*editor, dir.getChildFile("editor.png"), 1.0f);
   ok = save(*editor, dir.getChildFile("editor@1.5x.png"), 1.5f) && ok;
+  ok = saveTyping(*editor, dir.getChildFile("editor-typing.png")) && ok;
+  ok = savePlaying(*editor, processor, dir.getChildFile("editor-playing.png")) && ok;
 
   editor->setBoundsConstrained({0, 0, 940, 970}); // what the window manager did
   std::cout << "asked for 940x970, constrained to " << editor->getWidth() << "x"
@@ -123,6 +225,8 @@ int main(int argc, char **argv) {
   processor.editorPage = 1;
   editor.reset(processor.createEditor());
   ok = save(*editor, dir.getChildFile("pedals.png"), 1.5f) && ok;
+  ok = save(*editor, dir.getChildFile("pedals@1x.png"), 1.0f) && ok;
+  ok = saveTyping(*editor, dir.getChildFile("pedals-typing.png")) && ok;
 
   // The transposer is still on from above: the tuner must not hear it. Not
   // a custom tuning saved to the library, which would overwrite the player's.
@@ -156,7 +260,7 @@ int main(int argc, char **argv) {
   processor.editorPage = 0;
   editor.reset(processor.createEditor());
   if (auto *button = findButton(*editor, "settings")) {
-    evil::gui::SettingsPanel panel(*settings);
+    evil::gui::SettingsPanel panel;
     juce::CallOutBox box(panel, button->getBounds(),
                          button->getParentComponent());
     ok = save(*editor, dir.getChildFile("settings.png"), 1.5f) && ok;
@@ -164,6 +268,96 @@ int main(int argc, char **argv) {
     std::cout << "FAILED: no settings button" << std::endl;
     ok = false;
   }
+
+  evil::gui::colours::setAccentHue(244.0f / 360.0f);
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("editor-violet.png"), 1.5f) && ok;
+
+  evil::gui::colours::setAccentHue(evil::gui::colours::defaultAccentHue);
+  editor.reset();
+  {
+    // The app is the same editor on a processor that knows it's in the app.
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Standalone);
+    evil::EvilAmplifierProcessor app;
+    juce::AudioProcessor::setTypeOfNextNewPlugin(
+        juce::AudioProcessor::wrapperType_Undefined);
+    app.prepareToPlay(48000.0, 128);
+    for (int i = 0; i < 500 && app.getModels().getStatus().state !=
+                                   evil::ModelManager::State::ready;
+         ++i)
+      juce::Thread::sleep(10);
+
+    std::unique_ptr<juce::AudioProcessorEditor> appEditor(app.createEditor());
+    ok = save(*appEditor, dir.getChildFile("app.png"), 1.5f) && ok;
+    if (auto *button = findButton(*appEditor, "settings")) {
+      evil::gui::SettingsPanel panel(evil::gui::SettingsPanel::AppActions{});
+      juce::CallOutBox box(panel, button->getBounds(),
+                           button->getParentComponent());
+      ok = save(*appEditor, dir.getChildFile("app-settings.png"), 1.5f) && ok;
+    } else {
+      std::cout << "FAILED: no settings button in the app" << std::endl;
+      ok = false;
+    }
+    appEditor.reset();
+    app.releaseResources();
+  }
+
+  processor.editorPage = 3;
+  editor.reset(processor.createEditor()); // no key yet: opens on the keys
+  ok = save(*editor, dir.getChildFile("agent-keys.png"), 1.5f) && ok;
+
+  agentSettings->set(evil::agent::AgentSettings::tone3000Key, "t3k_pub_not_real");
+  processor.getAgent().showForSnapshot(
+      {}, {"WXYZ-1234", "https://www.tone3000.com/activate",
+           "https://www.tone3000.com/activate?code=WXYZ-1234"});
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("agent-sign-in.png"), 1.5f) && ok;
+  processor.getAgent().showForSnapshot({});
+
+  using Entry = evil::agent::Session::Entry;
+  agentSettings->setApiKey(evil::agent::ProviderId::anthropic, "not-a-real-key");
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("agent-empty.png"), 1.5f) && ok;
+
+  const auto entry = [](Entry::Kind kind, const juce::String &text) {
+    Entry e;
+    e.kind = kind;
+    e.text = text;
+    return e;
+  };
+  std::vector<Entry> chat;
+  // Made up, and about nothing real: this is only to look at the layout.
+  chat.push_back(entry(Entry::Kind::user, "A tone like Example Song. I have an Example Guitar."));
+  chat.push_back(entry(Entry::Kind::activity, "searched the web: Example Song guitar gear"));
+  chat.push_back(entry(Entry::Kind::activity,
+                       "searched the web: tone3000 Example Amp NAM capture"));
+  auto loaded = entry(Entry::Kind::activity,
+                      "loaded amp: Example Amp by somebody (T3K licence), through the cabinet");
+  loaded.sources.push_back({"on TONE3000", "https://www.tone3000.com/tones/example-1"});
+  chat.push_back(std::move(loaded));
+  chat.push_back(entry(Entry::Kind::activity,
+                       "set Input -4.0 dB, EQ 3.2kHz 2.5 dB, OD Drive 3.0, OD Tone 6.0, "
+                       "OD Level -1.5 dB, Boost Gain 11.7 dB"));
+  auto answer = entry(
+      Entry::Kind::assistant,
+      "This is where the agent says what the original rig was and how sure it is, what "
+      "it set and why, and what's only an approximation.\n\n"
+      "Verse: as set.\nChorus: stomp on the overdrive.\nSolo: stomp on the boost.");
+  answer.sources.push_back({"Example rig rundown", "https://example.com/rundown"});
+  answer.sources.push_back({"Example interview", "https://example.com/interview"});
+  answer.before = std::make_shared<juce::XmlElement>("Preset");
+  chat.push_back(std::move(answer));
+  chat.push_back(entry(Entry::Kind::user, "Make it creamier."));
+  chat.push_back(entry(Entry::Kind::error,
+                       "Claude says the rate limit or credit has run out."));
+  processor.getAgent().showForSnapshot(std::move(chat));
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("agent-chat.png"), 1.5f) && ok;
 
   editor.reset();
   processor.releaseResources();

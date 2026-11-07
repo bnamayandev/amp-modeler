@@ -202,6 +202,10 @@ void prepareAudioDevices() {
   auto &devices = holder->deviceManager;
   for (auto *type : devices.getAvailableDeviceTypes())
     if (type->getTypeName() == jackTypeName) {
+      // Resetting the app builds a new processor while the device keeps
+      // running, and that device uses the type already in place.
+      if (dynamic_cast<PipeWireJackType *>(type) != nullptr)
+        return;
       devices.removeAudioDeviceType(type);
       break;
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "PluginProcessor.h"
+#include "gui/AgentPage.h"
 #include "gui/EvilLookAndFeel.h"
 #include "gui/PedalBoard.h"
 #include "gui/Settings.h"
@@ -19,7 +20,7 @@ public:
   void resized() override;
 
   static constexpr int designWidth = 980, designHeight = 648;
-  static constexpr int headerHeight = 60, footerHeight = 48;
+  static constexpr int headerHeight = 64, footerHeight = 48;
 
 private:
   /** Everything is laid out once in a fixed 980x648 design space on this
@@ -29,17 +30,33 @@ private:
     explicit Canvas(EvilAmplifierEditor &e) : owner(e) {}
     void paint(juce::Graphics &g) override { owner.paintCanvas(g); }
     void resized() override { owner.layoutCanvas(); }
+    void mouseDown(const juce::MouseEvent &e) override {
+      owner.canvasMouseDown(e);
+    }
+    void mouseDrag(const juce::MouseEvent &e) override {
+      owner.canvasMouseDrag(e);
+    }
     EvilAmplifierEditor &owner;
   };
 
   void paintCanvas(juce::Graphics &);
+  void paintFixedParts(juce::Graphics &);
   void paintFooter(juce::Graphics &);
+  void paintBeatLights(juce::Graphics &);
   void layoutCanvas();
+  void canvasMouseDown(const juce::MouseEvent &);
+  void canvasMouseDrag(const juce::MouseEvent &);
+  bool isStandalone() const {
+    return audioProcessor.wrapperType ==
+           juce::AudioProcessor::wrapperType_Standalone;
+  }
 
   void timerCallback() override;
   void changeListenerCallback(juce::ChangeBroadcaster *) override;
 
   void refreshModelStatus();
+  void refreshAmpHardware(float outputPeak);
+  void applyPresetColour();
   void refreshStats();
   void refreshIrStatus();
   void refreshPresetList();
@@ -64,16 +81,24 @@ private:
   juce::TooltipWindow tooltips{this, 600};
 
   // Header
-  juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"}, tunerTab{"tuner"};
+  juce::TextButton ampTab{"amp"}, pedalsTab{"pedals"}, tunerTab{"tuner"},
+      agentTab{"agent"};
   juce::ComboBox presetBox;
   juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"save"};
   juce::TextButton settingsButton{"settings"};
+
+  // The standalone app's window has no title bar: the header stands in for it.
+  juce::TextButton minimiseButton{"-"},
+      closeButton{juce::String::charToString(0x00d7)};
+  juce::ComponentDragger windowDragger;
+  bool draggingWindow = false;
 
   // Pages: the amp controls live on ampPage (laid out in canvas coordinates),
   // the pedals on the board.
   juce::Component ampPage;
   gui::PedalBoard pedalBoard;
   gui::TunerPage tunerPage;
+  gui::AgentPage agentPage;
 
   // Input
   gui::Knob inputKnob, gateKnob;
@@ -82,11 +107,13 @@ private:
   gui::LevelMeter inputMeter;
 
   // Amp
+  gui::TubeBank tubes;
   juce::Label modelName, modelDetails;
   juce::TextButton loadModelButton{"load .nam..."},
       builtinModelButton{"built-in"}, unloadModelButton{"unload"};
 
   // Cab
+  gui::Speaker speaker;
   juce::Label irName, irDetails;
   juce::TextButton loadIrButton{"load ir..."}, builtinIrButton{"built-in"};
   juce::ToggleButton cabButton{"cabinet on"};
@@ -114,15 +141,19 @@ private:
   std::unique_ptr<juce::ParameterAttachment> transposeAttachment;
   juce::Label cpuLabel, latencyLabel;
 
-  juce::Rectangle<int> inputPanel, ampPanel, cabPanel, eqPanel, outputPanel,
-      metronomeCaption, beatLeds, transposeCaption;
-  juce::Rectangle<float> gateLed;
+  juce::Rectangle<int> tabTray, inputPanel, ampPanel, ampDisplay, ampCaption,
+      cabPanel, eqPanel, outputPanel, metronomeCaption, beatLeds,
+      transposeCaption, statsArea;
+  juce::Rectangle<float> gateLed, liveLed;
+  gui::PaintCache fixedParts;
+  bool modelLive = false;
   std::vector<double> tapTimes;
   std::uint32_t lastClickCount = 0;
   double lastClickTime = 0.0;
   std::unique_ptr<juce::FileChooser> chooser;
   juce::File lastModelDirectory, lastIrDirectory;
   int textRefreshCounter = 0;
+  juce::String creditedIrSource, irCredit; // read from disk only when it changes
 
   JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EvilAmplifierEditor)
 };

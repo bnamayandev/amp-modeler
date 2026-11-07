@@ -42,7 +42,7 @@ public:
   static constexpr int panelWidth = 300, panelHeight = 118,
                        appSectionHeight = 138;
   /** The swatch hues, in degrees; the first is the default. */
-  static constexpr std::array<float, 9> swatchHues{350.0f, 18.0f,  42.0f,
+  static constexpr std::array<float, 9> swatchHues{10.0f,  350.0f, 40.0f,
                                                    95.0f,  150.0f, 185.0f,
                                                    215.0f, 268.0f, 315.0f};
 

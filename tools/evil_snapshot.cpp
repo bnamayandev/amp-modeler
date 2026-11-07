@@ -3,9 +3,11 @@
 //
 //   evil-snapshot <output-directory>
 //
-// Writes editor.png (default size), editor@1.5x.png, stretched.png, which
-// simulates a window manager forcing the window to an odd size, to check the
-// layout scales uniformly, pedals.png: the pedal page with a few pedals on,
+// Writes editor.png (default size), editor@1.5x.png, editor-playing.png: the
+// amp page with a guitar going through it and the EQ moved, editor-violet.png:
+// another accent, stretched.png, which simulates a window manager forcing the
+// window to an odd size, to check the layout scales uniformly, pedals.png and
+// pedals@1x.png: the pedal page with a few pedals on,
 // editor-typing.png and pedals-typing.png: those pages with every value box open
 // for typing, tuner-idle.png, tuner.png, tuner-in-tune.png and tuner-locked.png: the tuner
 // page with a custom tuning, hearing notes played into the processor, and
@@ -76,6 +78,71 @@ bool saveTyping(juce::Component &page, const juce::File &file) {
   return ok;
 }
 
+/** Saves the amp page as it looks with a guitar going through it and the EQ
+    moved, then puts the EQ back. Nothing's running, so it hands every display
+    what the editor's timer would. */
+bool savePlaying(juce::AudioProcessorEditor &editor,
+                 evil::EvilAmplifierProcessor &processor, const juce::File &file) {
+  auto *spectrum = findChild<evil::gui::Spectrum>(editor);
+  auto *tubes = findChild<evil::gui::TubeBank>(editor);
+  std::vector<evil::gui::LevelMeter *> meters;
+  findAll(editor, meters);
+  if (spectrum == nullptr || tubes == nullptr || meters.size() != 2) {
+    std::cout << "FAILED: no amp page displays" << std::endl;
+    return false;
+  }
+
+  constexpr std::array<float, evil::Equaliser::numBands> curve{
+      3.5f, 2.0f, -1.0f, -3.5f, -2.0f, 1.5f, 4.5f, 3.0f, 1.0f};
+  std::array<float, evil::Equaliser::numBands> bands;
+  auto &state = processor.getState();
+  for (size_t b = 0; b < bands.size(); ++b) {
+    auto *param = state.getParameter(evil::params::eqBands[b]);
+    param->setValueNotifyingHost(param->convertTo0to1(curve[b]));
+    bands[b] = param->getValue();
+  }
+  spectrum->setBands(bands, (double)evil::Equaliser::maxGainDb);
+
+  // A distorted chord: its harmonics, over the hash an amp and a cab leave.
+  constexpr double rate = 48000.0;
+  constexpr int block = 4096;
+  std::array<float, block> samples;
+  juce::Random noise(7);
+  double hash = 0.0;
+  int position = 0;
+  for (int tick = 0; tick < 12; ++tick) {
+    for (auto &sample : samples) {
+      const double t = position++ / rate;
+      double v = 0.0;
+      for (const double root : {82.4, 123.5, 164.8})
+        for (int k = 1; k <= 24; ++k)
+          v += 0.08 / std::pow((double)k, 1.1) *
+               std::sin(juce::MathConstants<double>::twoPi * root * k * t + k);
+      hash += 0.25 * ((noise.nextDouble() * 2.0 - 1.0) - hash);
+      sample = (float)(v + 0.09 * hash);
+    }
+    spectrum->push(samples.data(), block);
+    spectrum->refresh(rate, 1.0f / 30.0f);
+  }
+  meters[0]->pushPeak(0.35f, 1.0f / 30.0f);
+  meters[1]->pushPeak(0.95f, 1.0f / 30.0f);
+  tubes->snapTo(true, 0.85f);
+
+  const bool ok = save(editor, file, 1.5f);
+
+  tubes->snapTo(true, 0.0f);
+  meters[0]->pushPeak(0.0f, 100.0f);
+  meters[1]->pushPeak(0.0f, 100.0f);
+  for (size_t b = 0; b < bands.size(); ++b) {
+    auto *param = state.getParameter(evil::params::eqBands[b]);
+    param->setValueNotifyingHost(param->getDefaultValue());
+    bands[b] = param->getValue();
+  }
+  spectrum->setBands(bands, (double)evil::Equaliser::maxGainDb);
+  spectrum->refresh(rate, 100.0f); // no fresh samples: the curve sinks away
+  return ok;
+}
+
 /** Plays a plucked note through the processor and hands what comes out of its
     tuner tap to the page, the way the editor's timer does. */
 void playNote(evil::EvilAmplifierProcessor &processor,
@@ -140,6 +207,7 @@ int main(int argc, char **argv) {
   bool ok = save(*editor, dir.getChildFile("editor.png"), 1.0f);
   ok = save(*editor, dir.getChildFile("editor@1.5x.png"), 1.5f) && ok;
   ok = saveTyping(*editor, dir.getChildFile("editor-typing.png")) && ok;
+  ok = savePlaying(*editor, processor, dir.getChildFile("editor-playing.png")) && ok;
 
   editor->setBoundsConstrained({0, 0, 940, 970}); // what the window manager did
   std::cout << "asked for 940x970, constrained to " << editor->getWidth() << "x"
@@ -157,6 +225,7 @@ int main(int argc, char **argv) {
   processor.editorPage = 1;
   editor.reset(processor.createEditor());
   ok = save(*editor, dir.getChildFile("pedals.png"), 1.5f) && ok;
+  ok = save(*editor, dir.getChildFile("pedals@1x.png"), 1.0f) && ok;
   ok = saveTyping(*editor, dir.getChildFile("pedals-typing.png")) && ok;
 
   // The transposer is still on from above: the tuner must not hear it. Not
@@ -199,6 +268,11 @@ int main(int argc, char **argv) {
     std::cout << "FAILED: no settings button" << std::endl;
     ok = false;
   }
+
+  evil::gui::colours::setAccentHue(244.0f / 360.0f);
+  editor.reset();
+  editor.reset(processor.createEditor());
+  ok = save(*editor, dir.getChildFile("editor-violet.png"), 1.5f) && ok;
 
   evil::gui::colours::setAccentHue(evil::gui::colours::defaultAccentHue);
   editor.reset();

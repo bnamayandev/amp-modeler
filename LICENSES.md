@@ -21,10 +21,11 @@ they combine the components below, and the strongest terms apply to the combinat
   **GPL-3.0**. A model trained on that data is a derived work in the cautious reading; GPL-3.0
   is compatible with distributing the plugin under AGPLv3. If you want different terms,
   replace it with a capture of your own (`training/README.md`).
-- `resources/fonts/`: [Inter 4.1](https://github.com/rsms/inter) and
-  [JetBrains Mono 2.304](https://github.com/JetBrains/JetBrainsMono), embedded for the editor
-  UI. Both are under the **SIL Open Font License 1.1** (licence texts alongside the fonts),
-  which allows bundling them in software of any licence.
+- `resources/fonts/`: [Barlow](https://github.com/jpt/barlow),
+  [Share Tech Mono](https://fonts.google.com/specimen/Share+Tech+Mono) and
+  [New Rocker](https://fonts.google.com/specimen/New+Rocker), embedded for the editor UI. All
+  are under the **SIL Open Font License 1.1** (licence texts alongside the fonts), which allows
+  bundling them in software of any licence.
 - `resources/brand/`: the TONE3000 logo and T3K mark, unaltered, from TONE3000's published
   logo pack. They identify TONE3000 as its [API terms](https://www.tone3000.com/api/terms)
   require. They belong to TONE3000 and aren't covered by anything else in this repository.

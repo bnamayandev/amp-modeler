@@ -20,7 +20,7 @@ public:
   void resized() override;
 
   static constexpr int designWidth = 980, designHeight = 648;
-  static constexpr int headerHeight = 60, footerHeight = 48;
+  static constexpr int headerHeight = 64, footerHeight = 48;
 
 private:
   /** Everything is laid out once in a fixed 980x648 design space on this
@@ -40,7 +40,9 @@ private:
   };
 
   void paintCanvas(juce::Graphics &);
+  void paintFixedParts(juce::Graphics &);
   void paintFooter(juce::Graphics &);
+  void paintBeatLights(juce::Graphics &);
   void layoutCanvas();
   void canvasMouseDown(const juce::MouseEvent &);
   void canvasMouseDrag(const juce::MouseEvent &);
@@ -53,6 +55,8 @@ private:
   void changeListenerCallback(juce::ChangeBroadcaster *) override;
 
   void refreshModelStatus();
+  void refreshAmpHardware(float outputPeak);
+  void applyPresetColour();
   void refreshStats();
   void refreshIrStatus();
   void refreshPresetList();
@@ -103,11 +107,13 @@ private:
   gui::LevelMeter inputMeter;
 
   // Amp
+  gui::TubeBank tubes;
   juce::Label modelName, modelDetails;
   juce::TextButton loadModelButton{"load .nam..."},
       builtinModelButton{"built-in"}, unloadModelButton{"unload"};
 
   // Cab
+  gui::Speaker speaker;
   juce::Label irName, irDetails;
   juce::TextButton loadIrButton{"load ir..."}, builtinIrButton{"built-in"};
   juce::ToggleButton cabButton{"cabinet on"};
@@ -135,9 +141,12 @@ private:
   std::unique_ptr<juce::ParameterAttachment> transposeAttachment;
   juce::Label cpuLabel, latencyLabel;
 
-  juce::Rectangle<int> inputPanel, ampPanel, cabPanel, eqPanel, outputPanel,
-      metronomeCaption, beatLeds, transposeCaption;
-  juce::Rectangle<float> gateLed;
+  juce::Rectangle<int> tabTray, inputPanel, ampPanel, ampDisplay, ampCaption,
+      cabPanel, eqPanel, outputPanel, metronomeCaption, beatLeds,
+      transposeCaption, statsArea;
+  juce::Rectangle<float> gateLed, liveLed;
+  gui::PaintCache fixedParts;
+  bool modelLive = false;
   std::vector<double> tapTimes;
   std::uint32_t lastClickCount = 0;
   double lastClickTime = 0.0;

@@ -54,10 +54,12 @@ juce_add_binary_data(EvilAmplifierData
     HEADER_NAME EvilBinaryData.h
     NAMESPACE EvilBinaryData
     SOURCES
-        resources/fonts/Inter-Regular.ttf
-        resources/fonts/Inter-Medium.ttf
-        resources/fonts/JetBrainsMono-Regular.ttf
-        resources/fonts/JetBrainsMono-Medium.ttf
+        resources/fonts/Barlow-Regular.ttf
+        resources/fonts/Barlow-Medium.ttf
+        resources/fonts/BarlowSemiCondensed-SemiBold.ttf
+        resources/fonts/BarlowCondensed-ExtraBoldItalic.ttf
+        resources/fonts/ShareTechMono-Regular.ttf
+        resources/fonts/NewRocker-Regular.ttf
         resources/irs/EvilCab4x12.wav
         resources/models/BlackstarHT1.nam
         resources/presets/factory_presets.xml
@@ -137,6 +139,7 @@ target_sources(EvilAmplifier PRIVATE
     source/StandaloneApp.cpp
     source/gui/AgentPage.cpp
     source/gui/EvilLookAndFeel.cpp
+    source/gui/Hardware.cpp
     source/gui/PedalBoard.cpp
     source/gui/Settings.cpp
     source/gui/TunerPage.cpp
@@ -180,6 +183,7 @@ if(EVIL_BUILD_TOOLS)
         source/StandaloneApp.cpp
         source/gui/AgentPage.cpp
         source/gui/EvilLookAndFeel.cpp
+        source/gui/Hardware.cpp
         source/gui/PedalBoard.cpp
         source/gui/Settings.cpp
         source/gui/TunerPage.cpp

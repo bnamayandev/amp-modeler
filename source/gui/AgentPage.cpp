@@ -35,15 +35,15 @@ void styleAsText(juce::TextEditor &editor, const juce::Font &font, juce::Colour 
   editor.setFont(font);
 }
 
-void styleLink(juce::HyperlinkButton &link, float size = 11.0f) {
-  link.setFont(mono(size), false, juce::Justification::centredLeft);
+void styleLink(juce::HyperlinkButton &link, float size = 13.0f) {
+  link.setFont(sans(size, true), false, juce::Justification::centredLeft);
   link.setColour(juce::HyperlinkButton::textColourId, colours::accent());
 }
 
 /** Field for pasting a key: shows that one's there without showing it. */
 void styleSecret(juce::TextEditor &editor) {
   editor.setPasswordCharacter((juce::juce_wchar)0x2022);
-  editor.setFont(mono(12.5f));
+  editor.setFont(readout(13.5f));
   editor.setJustification(juce::Justification::centredLeft);
   editor.setIndents(8, 0);
   editor.setSelectAllWhenFocused(true);
@@ -60,11 +60,12 @@ public:
   explicit Transcript(AgentPage &p) : page(p) {
     for (const auto *example : examples) {
       auto *button = exampleButtons.add(new juce::TextButton(example));
+      gui::setProse(*button);
       button->onClick = [this, example] { page.setComposer(example); };
       addChildComponent(button);
     }
     addChildComponent(hint);
-    styleAsText(hint, sans(14.0f), colours::textSoft);
+    styleAsText(hint, sans(15.5f), colours::textSoft);
     hint.setJustification(juce::Justification::centred);
     hint.setText("Describe a sound: a song, an artist, or a change to what you "
                  "have now. It looks up the gear, finds captures on TONE3000 and "
@@ -165,7 +166,7 @@ private:
     auto row = std::make_unique<Row>();
     row->kind = entry.kind;
     const bool activity = entry.kind == Entry::Kind::activity;
-    styleAsText(row->body, activity ? mono(11.5f) : sans(14.0f),
+    styleAsText(row->body, activity ? readout(12.0f) : sans(15.5f),
                 activity ? colours::muted : colours::text);
     row->body.setText((activity ? juce::String::charToString(0x00b7) + " " : juce::String()) +
                       entry.text);
@@ -223,7 +224,7 @@ private:
     }
     int cursor = x;
     constexpr int linkHeight = 18;
-    const auto font = mono(11.0f);
+    const auto font = sans(13.0f, true);
     for (auto *link : links) {
       const int linkWidth =
           juce::roundToInt(juce::GlyphArrangement::getStringWidth(font, link->getButtonText())) + 14;
@@ -306,7 +307,7 @@ public:
                         "code filled in");
     addChildComponent(codeLink);
 
-    styleAsText(notes, sans(13.0f), colours::textSoft);
+    styleAsText(notes, sans(14.0f), colours::textSoft);
     notes.setText(
         "Requests go straight from this computer to the company you choose, on "
         "your account and at your cost. Keys are saved only in " +
@@ -377,14 +378,14 @@ public:
     const auto code = page.session.getSignInCode();
     if (code.userCode.isNotEmpty()) {
       auto area = statusArea;
-      const auto font = mono(15.0f, true, 0.06f);
+      const auto font = readout(18.0f, 0.06f);
       g.setFont(font);
       g.setColour(colours::accent());
       g.drawText(code.userCode,
                  area.removeFromLeft(juce::roundToInt(juce::GlyphArrangement::getStringWidth(
                                          font, code.userCode)) + 14),
                  juce::Justification::centredLeft, false);
-      g.setFont(mono(11.5f));
+      g.setFont(sans(13.5f));
       g.setColour(colours::textSoft);
       g.drawText("enter this at " +
                      code.verificationUri.fromFirstOccurrenceOf("://", false, false) +
@@ -392,7 +393,7 @@ public:
                  area, juce::Justification::centredLeft, true);
       return;
     }
-    g.setFont(mono(11.5f));
+    g.setFont(sans(13.5f));
     g.setColour(secretKeyRefused ? colours::accent() : colours::textSoft);
     g.drawText(secretKeyRefused
                    ? "That's a secret key, which must stay on a server. Use your "
@@ -486,7 +487,7 @@ AgentPage::AgentPage(agent::Session &s, agent::AgentSettings &a)
   addAndMakeVisible(t3kMark);
   poweredBy.setButtonText("powered by");
   poweredBy.setURL(juce::URL("https://www.tone3000.com"));
-  styleLink(poweredBy, 10.5f);
+  styleLink(poweredBy, 12.0f);
   poweredBy.setColour(juce::HyperlinkButton::textColourId, colours::muted);
   poweredBy.setTooltip("https://www.tone3000.com");
   addAndMakeVisible(poweredBy);
@@ -500,7 +501,7 @@ AgentPage::AgentPage(agent::Session &s, agent::AgentSettings &a)
 
   composer.setMultiLine(true, true);
   composer.setReturnKeyStartsNewLine(false);
-  composer.setFont(sans(14.0f));
+  composer.setFont(sans(15.5f));
   composer.setBorder(juce::BorderSize<int>(0));
   composer.setIndents(10, 10);
   composer.setScrollbarsShown(false);
@@ -543,7 +544,7 @@ void AgentPage::resized() {
   top.removeFromLeft(6);
   newChatButton.setBounds(top.removeFromLeft(84));
 
-  auto browse = top.removeFromRight(196); // the label centres clear of the mark
+  auto browse = top.removeFromRight(216); // the label centres clear of the mark
   browseButton.setBounds(browse);
   t3kMark.setBounds(browse.withTrimmedLeft(10).withWidth(30).withSizeKeepingCentre(30, 10));
   top.removeFromRight(10);
@@ -553,32 +554,38 @@ void AgentPage::resized() {
   b.removeFromTop(8);
 
   auto bottom = b.removeFromBottom(44);
-  sendButton.setBounds(bottom.removeFromRight(72));
+  sendButton.setBounds(bottom.removeFromRight(76));
   bottom.removeFromRight(8);
   composer.setBounds(bottom);
   b.removeFromBottom(8);
 
   panelArea = b;
-  auto inner = panelArea.reduced(14, 8).withTrimmedTop(34);
-  viewport.setBounds(inner);
-  keysView->setBounds(panelArea.reduced(1, 1).withTrimmedTop(38));
+  screenArea = panelArea.reduced(14, 0).withTrimmedTop(32).withTrimmedBottom(16);
+  viewport.setBounds(screenArea.reduced(12, 8));
+  keysView->setBounds(screenArea.reduced(2));
   transcript->layoutForWidth(viewport.getMaximumVisibleWidth() - 4);
   viewport.setViewPosition(0, transcript->getHeight());
 }
 
 void AgentPage::paint(juce::Graphics &g) {
   using namespace colours;
-  headerRule = drawPanel(g, panelArea, 0, keysView->isVisible() ? "keys" : "tone agent");
+  const auto font = readout(12.0f);
+  const auto width = statusText.isEmpty()
+                         ? 0.0f
+                         : juce::GlyphArrangement::getStringWidth(font, statusText) + 14.0f;
+  const bool keys = keysView->isVisible();
+  frame.draw(g, getLocalBounds(), (keys ? 1 : 0) + (juce::int64)width * 2,
+             [this, keys, width](juce::Graphics &c) {
+               headerRule = drawPanel(c, panelArea, keys ? "keys" : "tone agent", width);
+               drawRecess(c, screenArea.toFloat(), 4.0f);
+             });
   if (statusText.isEmpty())
     return;
-  const auto font = mono(11.5f);
-  const auto width = juce::GlyphArrangement::getStringWidth(font, statusText) + 18.0f;
-  const auto area = headerRule.withLeft(juce::jmax(headerRule.getX(), headerRule.getRight() - width));
-  g.setColour(panel);
-  g.fillRect(area);
   g.setFont(font);
   g.setColour(session.isBusy() ? accent() : muted);
-  g.drawText(statusText, area, juce::Justification::centredRight, true);
+  g.drawText(statusText,
+             headerRule.withLeft(juce::jmax(headerRule.getX(), headerRule.getRight() - width)),
+             juce::Justification::centredRight, true);
 }
 
 void AgentPage::refresh() {

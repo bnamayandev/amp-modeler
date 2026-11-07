@@ -224,21 +224,25 @@ void TunerPage::resized() {
   b.removeFromRight(12);
   meterPanel = b;
 
-  // Meter: which string, the note, what to do; then the gauge and the numbers.
+  // Meter: a display with which string, the note and what to do; then the gauge
+  // and the numbers.
   {
-    auto m = meterPanel.reduced(28, 0).withTrimmedTop(46).withTrimmedBottom(16);
-    statsArea = m.removeFromBottom(50);
-    m.removeFromBottom(22);
-    gaugeArea = m.removeFromBottom(84);
-    m.removeFromBottom(14);
-    captionArea = m.removeFromTop(18);
-    hintArea = m.removeFromBottom(30);
-    noteArea = m;
+    auto m = meterPanel.reduced(22, 0).withTrimmedTop(38).withTrimmedBottom(22);
+    statsArea = m.removeFromBottom(52);
+    m.removeFromBottom(10);
+    gaugeWell = m.removeFromBottom(92);
+    gaugeArea = gaugeWell.reduced(14, 8);
+    m.removeFromBottom(10);
+    displayArea = m;
+    auto d = displayArea.reduced(0, 12);
+    captionArea = d.removeFromTop(18);
+    hintArea = d.removeFromBottom(30);
+    noteArea = d;
   }
 
   // Strings: the tuning, a row per string, then auto and how locking works.
-  auto s = stringsPanel.reduced(rowInset, 0).withTrimmedTop(44);
-  s.removeFromBottom(14);
+  auto s = stringsPanel.reduced(rowInset + 4, 0).withTrimmedTop(38);
+  s.removeFromBottom(22);
   {
     auto top = s.removeFromTop(30);
     tuningBox.setBounds(top.removeFromLeft(182));
@@ -264,37 +268,41 @@ void TunerPage::resized() {
       r.removeFromLeft(gapAfter);
       return cell;
     };
-    row.number.setBounds(next(34, 24));
-    row.noteBox.setBounds(next(84, 16));
+    row.number.setBounds(next(34, 22));
+    row.noteBox.setBounds(next(80, 14));
     row.octaveDown.setBounds(next(26, 0));
     row.octave = next(24, 0);
-    row.octaveUp.setBounds(next(26, 8));
+    row.octaveUp.setBounds(next(26, 6));
     row.hz = r;
   }
 }
 
 void TunerPage::paint(juce::Graphics &g) {
+  frame.draw(g, getLocalBounds(), 0, [this](juce::Graphics &c) {
+    drawPanel(c, meterPanel, "tuner");
+    drawPanel(c, stringsPanel, "tuning");
+    drawRecess(c, displayArea.toFloat(), 4.0f);
+    drawRecess(c, gaugeWell.toFloat(), 3.0f);
+    drawRecess(c, statsArea.toFloat(), 3.0f);
+    paintStringsFixed(c);
+  });
   paintMeter(g);
   paintStrings(g);
 }
 
 void TunerPage::paintMeter(juce::Graphics &g) {
   using namespace colours;
-  const auto rule = drawPanel(g, meterPanel, 0, "tuner");
   const bool playing = reading.hz > 0.0;
   const bool inTune = reading.isInTune();
   const bool hasTarget = reading.string >= 0;
 
-  // An LED at the end of the header rule, as on the other panels.
-  const auto led = juce::Rectangle<float>(8.0f, 8.0f).withCentre(
-      {rule.getRight() - 4.0f, rule.getCentreY()});
-  g.setColour(panel);
-  g.fillRect(led.expanded(8.0f, 0.0f).withHeight(2.0f).withCentre(
-      led.getCentre())); // gap in the rule
+  // An LED in the display's corner: the go-ahead.
+  const auto led = juce::Rectangle<float>(10.0f, 10.0f).withCentre(
+      {(float)displayArea.getRight() - 18.0f, (float)displayArea.getY() + 18.0f});
   drawLed(g, led, inTune, accent());
 
-  g.setFont(caption());
-  g.setColour(muted);
+  g.setFont(silk(12.5f, 0.14f));
+  g.setColour(textSoft);
   g.drawText(!hasTarget ? juce::String("AUTO")
                         : "STRING " + juce::String(reading.string + 1) +
                               (lockedString >= 0 ? " " +
@@ -303,29 +311,42 @@ void TunerPage::paintMeter(juce::Graphics &g) {
                                                  : juce::String()),
              captionArea, juce::Justification::centred);
 
-  // The note, with its octave small beside it.
-  const auto noteFont = sans(132.0f, true, -0.03f);
-  g.setColour(!playing ? mutedSoft : inTune ? accent() : text);
-  if (hasTarget) {
-    const auto name = tuning::noteName(reading.target);
-    const auto octave = juce::String(tuning::octaveOf(reading.target.midi));
-    const auto octaveFont = mono(30.0f);
+  // The note, with its octave small beside it, glowing once it's in tune.
+  const auto colour = !playing ? mutedSoft : inTune ? accent() : text;
+  const auto name = hasTarget ? tuning::noteName(reading.target) : juce::String("--");
+  const auto octave = hasTarget ? juce::String(tuning::octaveOf(reading.target.midi))
+                                : juce::String();
+  const auto key = (name + "/" + octave + (inTune ? "/tuned" : "") +
+                    (playing ? "/playing" : ""))
+                       .hashCode64();
+  noteCache.draw(g, noteArea, key, [=, this](juce::Graphics &c) {
+    const auto area = noteArea.withZeroOrigin().toFloat();
+    if (!hasTarget) { // nothing to show yet: just a pair of dashes
+      c.setFont(readout(72.0f));
+      c.setColour(mutedSoft);
+      c.drawText(name, area, juce::Justification::centred, false);
+      return;
+    }
+    const auto noteFont = display(164.0f);
+    const auto octaveFont = readout(30.0f);
     const float nameWidth = juce::GlyphArrangement::getStringWidth(noteFont, name);
-    const float octaveWidth =
-        juce::GlyphArrangement::getStringWidth(octaveFont, octave);
-    auto row = noteArea.toFloat().withSizeKeepingCentre(
-        nameWidth + 6.0f + octaveWidth, (float)noteArea.getHeight());
-    g.setFont(noteFont);
-    g.drawText(name, row.removeFromLeft(nameWidth + 6.0f),
+    const float octaveWidth = juce::GlyphArrangement::getStringWidth(octaveFont, octave);
+    auto row = area.withSizeKeepingCentre(nameWidth + 8.0f + octaveWidth, area.getHeight());
+
+    juce::GlyphArrangement glyphs;
+    glyphs.addFittedText(noteFont, name, row.getX(), row.getY(), nameWidth + 8.0f,
+                         row.getHeight(), juce::Justification::centredLeft, 1, 1.0f);
+    juce::Path letters;
+    glyphs.createPath(letters);
+    if (inTune)
+      juce::DropShadow(accent().withAlpha(0.85f), 26, {}).drawForPath(c, letters);
+    c.setColour(colour);
+    c.fillPath(letters);
+
+    c.setFont(octaveFont);
+    c.drawText(octave, row.withTrimmedLeft(nameWidth + 8.0f).withTrimmedTop(row.getHeight() * 0.5f),
                juce::Justification::centredLeft, false);
-    g.setFont(octaveFont);
-    g.drawText(octave, row.withTrimmedTop(row.getHeight() * 0.5f),
-               juce::Justification::centredLeft, false);
-  } else {
-    g.setColour(line);
-    g.setFont(noteFont);
-    g.drawText("--", noteArea, juce::Justification::centred, false);
-  }
+  });
 
   // What to do about it.
   juce::String hint;
@@ -340,9 +361,9 @@ void TunerPage::paintMeter(juce::Graphics &g) {
       hint << " " << juce::String(std::abs(reading.cents) / 100.0, 1)
            << " semitones";
   }
-  g.setFont(sans(18.0f, inTune));
-  g.setColour(inTune ? accent() : playing ? textSoft : muted);
-  g.drawText(hint, hintArea, juce::Justification::centred, false);
+  g.setFont(silk(17.0f, 0.12f));
+  g.setColour(inTune ? accent() : playing ? text : muted);
+  g.drawText(hint.toUpperCase(), hintArea, juce::Justification::centred, false);
 
   paintGauge(g);
   paintStats(g);
@@ -354,73 +375,64 @@ void TunerPage::paintGauge(juce::Graphics &g) {
   const bool inTune = reading.isInTune();
 
   auto area = gaugeArea.toFloat();
-  const auto captions = area.removeFromTop(16.0f);
-  const auto labels = area.removeFromBottom(16.0f);
-  area.removeFromBottom(4.0f);
-  // Inset so the end labels and the pinned needle stay inside the panel.
-  const auto track = area.reduced(10.0f, 2.0f);
-  const float mid = track.getCentreY();
+  const auto captions = area.removeFromTop(13.0f);
+  const auto labels = area.removeFromBottom(13.0f);
+  area.removeFromBottom(3.0f);
+  const auto track = area.reduced(8.0f, 2.0f);
   const auto xOf = [&track](float cents) {
-    return juce::jmap(cents, -gaugeCents, gaugeCents, track.getX(),
-                      track.getRight());
+    return juce::jmap(cents, -gaugeCents, gaugeCents, track.getX(), track.getRight());
   };
 
   g.setFont(caption());
-  g.setColour(mutedSoft);
+  g.setColour(muted);
   g.drawText("FLAT", captions, juce::Justification::centredLeft, false);
   g.drawText("SHARP", captions, juce::Justification::centredRight, false);
 
-  // The in-tune zone, then a tick every 5 cents and a longer one every 25.
+  // A ladder of LEDs, 2.5 cents apart: lit from the centre out to the note.
+  const float spacing = xOf(2.5f) - xOf(0.0f);
+  const float width = juce::jmax(2.0f, spacing * 0.56f);
   const auto zone = (float)tuning::inTuneCents;
-  g.setColour(accent().withAlpha(inTune ? 0.42f : 0.16f));
-  g.fillRoundedRectangle(juce::Rectangle<float>::leftTopRightBottom(
-                             xOf(-zone), track.getY(), xOf(zone),
-                             track.getBottom()),
-                         2.0f);
-  g.setFont(mono(10.5f));
-  for (int cents = -50; cents <= 50; cents += 5) {
-    const bool major = cents % 25 == 0;
-    const float half = cents == 0 ? track.getHeight() * 0.5f
-                       : major    ? track.getHeight() * 0.32f
-                                  : track.getHeight() * 0.14f;
-    const float x = xOf((float)cents);
-    g.setColour(major ? muted : line);
-    g.fillRect(x - 0.5f, mid - half, 1.0f, half * 2.0f);
-    if (major) {
-      g.setColour(muted);
-      g.drawText((cents > 0 ? "+" : "") + juce::String(cents),
-                 juce::Rectangle<float>(40.0f, labels.getHeight())
-                     .withCentre({x, labels.getCentreY()}),
-                 juce::Justification::centred, false);
+  const float at = playing ? juce::jlimit(-gaugeCents, gaugeCents, needle) : 0.0f;
+  for (int i = -20; i <= 20; ++i) {
+    const float cents = 2.5f * (float)i;
+    const bool centre = i == 0, major = i % 10 == 0;
+    const float height = centre ? track.getHeight()
+                         : major ? track.getHeight() * 0.78f
+                                 : track.getHeight() * 0.58f;
+    const auto led = juce::Rectangle<float>(centre ? width * 1.5f : width, height)
+                         .withCentre({xOf(cents), track.getCentreY()});
+    const bool nearest = playing && std::abs(cents - at) <= 1.25f;
+    const bool between = playing && ((at >= 0.0f && cents >= 0.0f && cents < at) ||
+                                     (at < 0.0f && cents <= 0.0f && cents > at));
+    const bool inZone = std::abs(cents) <= zone;
+    juce::Colour colour = (inZone ? accent() : text).withAlpha(inZone ? 0.2f : 0.075f);
+    if (between)
+      colour = text.withAlpha(0.4f);
+    if (nearest) {
+      const auto lit = inTune ? accent() : text;
+      g.setGradientFill(juce::ColourGradient(lit.withAlpha(0.5f), led.getCentre(),
+                                             lit.withAlpha(0.0f),
+                                             led.getCentre().translated(20.0f, 0.0f), true));
+      g.fillEllipse(circle(led.getCentre(), 20.0f));
+      colour = lit;
     }
+    g.setColour(colour);
+    g.fillRoundedRectangle(led, 1.0f);
   }
-  if (!playing)
-    return;
 
-  // The needle, with the distance from centre drawn in like a fader's value.
-  const float x = xOf(needle), centre = xOf(0.0f);
-  const auto colour = inTune ? accent() : text;
-  g.setColour(colour.withAlpha(0.35f));
-  g.fillRect(juce::Rectangle<float>::leftTopRightBottom(
-      juce::jmin(x, centre), mid - 1.5f, juce::jmax(x, centre), mid + 1.5f));
-  if (inTune) {
-    g.setGradientFill(juce::ColourGradient(
-        accent().withAlpha(0.5f), {x, mid}, accent().withAlpha(0.0f),
-        {x + 24.0f, mid}, true));
-    g.fillEllipse(juce::Rectangle<float>(48.0f, 48.0f).withCentre({x, mid}));
-  }
-  g.setColour(colour);
-  g.fillRoundedRectangle(
-      juce::Rectangle<float>(5.0f, track.getHeight()).withCentre({x, mid}), 2.5f);
+  g.setFont(readout(11.0f));
+  g.setColour(muted);
+  for (int cents = -50; cents <= 50; cents += 25)
+    g.drawText((cents > 0 ? "+" : "") + juce::String(cents),
+               juce::Rectangle<float>(40.0f, labels.getHeight())
+                   .withCentre({xOf((float)cents), labels.getCentreY()}),
+               juce::Justification::centred, false);
 }
 
 void TunerPage::paintStats(juce::Graphics &g) {
   using namespace colours;
   const bool playing = reading.hz > 0.0;
   const bool hasTarget = reading.string >= 0;
-
-  g.setColour(line);
-  g.fillRect(statsArea.getX(), statsArea.getY(), statsArea.getWidth(), 1);
 
   const juce::String none = "--";
   const std::array<std::pair<const char *, juce::String>, 4> stats{{
@@ -434,7 +446,7 @@ void TunerPage::paintStats(juce::Graphics &g) {
                                      " " + signedCents(reading.heardCents)
                                : none},
   }};
-  auto b = statsArea.withTrimmedTop(12);
+  auto b = statsArea.reduced(14, 8);
   const int width = b.getWidth() / (int)stats.size();
   for (const auto &[title, value] : stats) {
     auto column = b.removeFromLeft(width);
@@ -442,19 +454,17 @@ void TunerPage::paintStats(juce::Graphics &g) {
     g.setColour(muted);
     g.drawText(title, column.removeFromTop(16), juce::Justification::centredLeft,
                false);
-    g.setFont(mono(13.0f));
-    g.setColour(playing || value != none ? textSoft : mutedSoft);
+    g.setFont(readout(15.0f));
+    g.setColour(playing || value != none ? text : mutedSoft);
     g.drawText(value, column, juce::Justification::centredLeft, false);
   }
 }
 
-void TunerPage::paintStrings(juce::Graphics &g) {
+void TunerPage::paintStringsFixed(juce::Graphics &g) {
   using namespace colours;
-  drawPanel(g, stringsPanel, 0, "tuning");
-
   // Column headings over their columns.
   g.setFont(caption());
-  g.setColour(muted);
+  g.setColour(textSoft);
   const auto heading = [&](const char *title, juce::Rectangle<int> column,
                            juce::Justification justification) {
     g.drawText(title, column.withY(headerArea.getY()).withHeight(headerArea.getHeight()),
@@ -469,36 +479,41 @@ void TunerPage::paintStrings(juce::Graphics &g) {
           juce::Justification::centred);
   heading("PITCH", first.hz, juce::Justification::centredRight);
 
+  g.setFont(sans(13.0f));
+  g.setColour(muted);
+  g.drawFittedText("Click a string's number to lock onto it.\n"
+                   "String 1 is the thinnest.",
+                   footHintArea, juce::Justification::centredLeft, 2, 1.0f);
+}
+
+void TunerPage::paintStrings(juce::Graphics &g) {
+  using namespace colours;
   // A ledger of the strings, the one being tuned picked out in the accent.
   for (std::size_t s = 0; s < rows.size(); ++s) {
     const auto &row = rows[s];
     const auto note = strings[s];
     const bool active = reading.string == (int)s;
     if (active) {
-      g.setColour(accent().withAlpha(0.1f));
+      g.setColour(accent().withAlpha(0.14f));
       g.fillRoundedRectangle(row.bounds.toFloat().expanded(6.0f, 0.0f).reduced(0.0f, 1.0f),
-                             6.0f);
+                             3.0f);
+      g.setColour(accent());
+      g.fillRect(row.bounds.toFloat().withWidth(2.0f).translated(-6.0f, 0.0f).reduced(0.0f, 3.0f));
     }
     g.setColour(lineSoft);
     g.fillRect(row.bounds.getX(), row.bounds.getY(), row.bounds.getWidth(), 1);
 
-    g.setFont(mono(13.0f));
+    g.setFont(readout(15.0f));
     g.setColour(text);
     g.drawText(juce::String(tuning::octaveOf(note.midi)), row.octave,
                juce::Justification::centred, false);
-    g.setFont(mono(12.0f));
-    g.setColour(active ? textSoft : muted);
+    g.setFont(readout(13.0f));
+    g.setColour(active ? text : textSoft);
     g.drawText(juce::String(tuning::frequencyOf(note.midi), 1) + " Hz", row.hz,
                juce::Justification::centredRight, false);
   }
   g.setColour(lineSoft);
   g.fillRect(headerArea.getX(), rows.back().bounds.getBottom(),
              headerArea.getWidth(), 1);
-
-  g.setFont(mono(11.0f));
-  g.setColour(muted);
-  g.drawFittedText("click a string's number to lock onto it\n"
-                   "string 1 is the thinnest",
-                   footHintArea, juce::Justification::centredLeft, 2, 1.0f);
 }
 } // namespace evil::gui

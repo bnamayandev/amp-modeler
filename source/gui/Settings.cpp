@@ -109,7 +109,7 @@ void SettingsPanel::paint(juce::Graphics &g) {
     g.setColour(muted);
   }
   g.drawText("ACCENT", caption, juce::Justification::centredLeft);
-  g.setFont(mono(11.5f));
+  g.setFont(readout(13.0f));
   g.setColour(textSoft);
   g.drawText(juce::String(juce::roundToInt(hue * 360.0f) % 360) +
                  juce::String::charToString(0x00b0),

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Hardware.h"
 #include "agent/Session.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -47,8 +48,9 @@ private:
   juce::TextEditor composer;
   juce::TextButton sendButton{"send"};
 
-  juce::Rectangle<int> panelArea;
+  juce::Rectangle<int> panelArea, screenArea;
   juce::Rectangle<float> headerRule;
+  PaintCache frame;
   juce::String statusText;
   bool wasBusy = false;
 };

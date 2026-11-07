@@ -64,6 +64,7 @@ bool EvilAmplifierProcessor::isBusesLayoutSupported(
 void EvilAmplifierProcessor::prepareToPlay(double sampleRate,
                                            int samplesPerBlock) {
   prepared = false;
+  recorder.sampleRateChanged(sampleRate);
   currentSampleRate = sampleRate;
   const int maxBlock = juce::jmax(1, samplesPerBlock);
   chain.prepare(sampleRate, maxBlock);
@@ -128,6 +129,7 @@ void EvilAmplifierProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   tunerTap.push(mono, n);
   chain.process(mono, n, snapshot.read());
   analyserTap.push(mono, n);
+  recorder.push(mono, n);
   metronome.process(mono, n, snapshot.readMetronome(metronomeRunning.load()));
 
   // Never pass non-finite samples to the host (or to someone's ears).
@@ -178,6 +180,9 @@ void EvilAmplifierProcessor::processBlockBypassed(
         dst[i] = ring[(readStart + i) & (bypassDelayCapacity - 1)];
     }
   }
+
+  if (numOut > 0) // a take runs on through a bypass, as the output does
+    recorder.push(buffer.getReadPointer(0), n);
 }
 
 juce::AudioProcessorEditor *EvilAmplifierProcessor::createEditor() {

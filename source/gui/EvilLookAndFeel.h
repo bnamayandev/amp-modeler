@@ -20,6 +20,7 @@ inline const juce::Colour muted{0xff96938b};      // labels, meta
 inline const juce::Colour mutedSoft{0xff66645f};  // faintest text, idle marks
 inline const juce::Colour line = juce::Colours::white.withAlpha(0.13f);     // dividers
 inline const juce::Colour lineSoft = juce::Colours::white.withAlpha(0.06f); // faint dividers
+inline const juce::Colour recordLight{0xffe8352a}; // red on any gear, whatever the accent
 
 // The one vivid hue, chosen in settings: what the lights, tubes and values glow
 // in. Every accent tint is mixed down from these two rather than defined

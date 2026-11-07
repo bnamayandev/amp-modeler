@@ -73,6 +73,8 @@ private:
   void refreshMetronome();
   void tapTempo();
   void stepTranspose(int delta);
+  void toggleRecording();
+  void refreshRecording();
 
   EvilAmplifierProcessor &audioProcessor;
   juce::SharedResourcePointer<gui::Settings> settings; // sets the accent first
@@ -85,6 +87,8 @@ private:
       agentTab{"agent"};
   juce::ComboBox presetBox;
   juce::TextButton prevPreset{"<"}, nextPreset{">"}, savePreset{"save"};
+  gui::RecordButton recordButton;
+  double showSavedUntil = 0.0;
   juce::TextButton settingsButton{"settings"};
 
   // The standalone app's window has no title bar: the header stands in for it.

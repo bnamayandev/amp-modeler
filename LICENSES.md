@@ -9,6 +9,7 @@ they combine the components below, and the strongest terms apply to the combinat
 | [NeuralAmpModelerCore v0.6.0](https://github.com/sdatkinson/NeuralAmpModelerCore) | Neural model inference | MIT |
 | [Eigen](https://gitlab.com/libeigen/eigen) | Linear algebra under NAM Core | MPL 2.0 |
 | [nlohmann/json](https://github.com/nlohmann/json) (vendored in NAM Core) | Reading `.nam` files | MIT |
+| [FAAC 2.2](https://github.com/FreewareAdvancedAudio/faac) | AAC encoder for recording to `.mp4` | LGPL-2.1-or-later (compatible with distributing the combination under AGPLv3) |
 | Steinberg ASIO SDK headers (bundled with JUCE, Windows only) | ASIO in the standalone | GPLv3 (compatible with distributing the combination under AGPLv3) |
 | [Catch2 v3.8.1](https://github.com/catchorg/Catch2) | Unit tests only (not shipped) | BSL-1.0 |
 | [PyTorch](https://pytorch.org), NumPy, SciPy, soundfile | Offline training only (not shipped) | BSD-style |
@@ -42,4 +43,7 @@ they combine the components below, and the strongest terms apply to the combinat
 - **Sharing the plugin publicly as open source**: publish the source under AGPLv3 (or GPLv3+
   compatible terms for your own code, with the whole combination under AGPLv3).
 - **Selling it or closed source**: you need a JUCE commercial licence, and you need to drop
-  or replace the HT-1 model.
+  or replace the HT-1 model. FAAC is linked statically, so you'd also need to meet the LGPL's
+  terms for that (letting users relink against a modified FAAC), or replace it.
+- **AAC is a patent-licensed format**, whatever encoder makes it: the Via Licensing Alliance
+  runs a patent pool for it. Check where that stands before distributing commercially.

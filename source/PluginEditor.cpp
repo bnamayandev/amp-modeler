@@ -64,6 +64,10 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   savePreset.setTooltip("Save the current settings as a user preset");
   gui::setPrimary(savePreset);
   refreshPresetList();
+  canvas.addAndMakeVisible(recordButton);
+  recordButton.onClick = [this] { toggleRecording(); };
+  recordButton.setTooltip(
+      "Record the output to an .mp4 in your Downloads folder (without the metronome)");
   canvas.addAndMakeVisible(settingsButton);
   settingsButton.onClick = [this] { showSettings(); };
   settingsButton.setTooltip(isStandalone()
@@ -195,6 +199,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   refreshIrStatus();
   refreshStats();
   refreshMetronome();
+  refreshRecording();
   applyPresetColour();
   showPage(audioProcessor.editorPage);
 
@@ -334,6 +339,8 @@ void EvilAmplifierEditor::layoutCanvas() {
   nextPreset.setBounds(header.removeFromLeft(28));
   header.removeFromLeft(10);
   savePreset.setBounds(header.removeFromLeft(58));
+  header.removeFromLeft(8);
+  recordButton.setBounds(header.removeFromLeft(68));
   if (isStandalone()) {
     closeButton.setBounds(header.removeFromRight(24));
     header.removeFromRight(2);
@@ -562,6 +569,7 @@ void EvilAmplifierEditor::timerCallback() {
     lastClickTime = juce::Time::getMillisecondCounterHiRes();
   }
   canvas.repaint(beatLeds.expanded(6));
+  refreshRecording();
 
   if (++textRefreshCounter % 10 == 0) // ~3 Hz is plenty for text
   {
@@ -652,6 +660,45 @@ void EvilAmplifierEditor::stepTranspose(int delta) {
       audioProcessor.getState().getRawParameterValue(params::transpose)->load());
   transposeAttachment->setValueAsCompleteGesture((float)juce::jlimit(
       -PitchShifter::maxSemitones, PitchShifter::maxSemitones, current + delta));
+}
+
+void EvilAmplifierEditor::toggleRecording() {
+  auto &recorder = audioProcessor.getRecorder();
+  if (recorder.isRecording()) {
+    recorder.stop();
+  } else {
+    juce::String error;
+    if (!recorder.start(getDownloadsFolder(), audioProcessor.getSampleRate(), error))
+      juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                             "Can't record", error);
+  }
+  refreshRecording();
+}
+
+void EvilAmplifierEditor::refreshRecording() {
+  auto &recorder = audioProcessor.getRecorder();
+  const auto now = juce::Time::getMillisecondCounterHiRes();
+
+  if (const auto take = recorder.takeFinished()) {
+    if (take->error.isNotEmpty()) {
+      juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,
+                                             "Recording not saved", take->error);
+    } else {
+      showSavedUntil = now + 4000.0;
+      recordButton.setTooltip("Saved to " + take->file.getFullPathName() +
+                              "\nClick to record another");
+      if (take->droppedSeconds > 0.0)
+        juce::AlertWindow::showMessageBoxAsync(
+            juce::MessageBoxIconType::WarningIcon, "Recording has gaps",
+            "The disk couldn't keep up, so " + juce::String(take->droppedSeconds, 1) +
+                " s of audio went missing from " + take->file.getFullPathName());
+    }
+  }
+
+  if (recorder.isRecording())
+    recordButton.showRecording(recorder.getSeconds());
+  else
+    recordButton.showIdle(now < showSavedUntil ? "saved" : "rec");
 }
 
 void EvilAmplifierEditor::refreshStats() {

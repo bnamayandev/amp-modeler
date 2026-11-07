@@ -292,6 +292,45 @@ void Spectrum::paint(juce::Graphics &g) {
   }
 }
 
+void RecordButton::showRecording(double seconds) {
+  const int whole = (int)seconds;
+  if (recording && whole == shownSeconds)
+    return;
+  recording = true;
+  shownSeconds = whole;
+  const int hours = whole / 3600, minutes = whole / 60 % 60, secs = whole % 60;
+  setButtonText(hours > 0 ? juce::String::formatted("%d:%02d:%02d", hours, minutes, secs)
+                          : juce::String::formatted("%d:%02d", minutes, secs));
+  repaint();
+}
+
+void RecordButton::showIdle(const char *label) {
+  if (!recording && getButtonText() == label)
+    return;
+  recording = false;
+  setButtonText(label);
+  repaint();
+}
+
+juce::String RecordButton::getTooltip() {
+  return recording ? juce::String("Stop, and save the take to your Downloads folder")
+                   : juce::TextButton::getTooltip();
+}
+
+void RecordButton::paintButton(juce::Graphics &g, bool highlighted, bool down) {
+  getLookAndFeel().drawButtonBackground(g, *this, {}, highlighted, down);
+
+  auto area = getLocalBounds().translated(0, down ? 1 : 0);
+  const auto lightArea = area.removeFromLeft(21).toFloat();
+  drawLed(g, juce::Rectangle<float>(8.0f, 8.0f).withCentre(lightArea.getCentre().translated(2.0f, 0.0f)),
+          recording, colours::recordLight);
+
+  g.setColour(recording || highlighted ? colours::text : colours::textSoft);
+  g.setFont(recording ? readout(14.0f) : silk(12.5f, 0.08f));
+  g.drawFittedText(recording ? getButtonText() : getButtonText().toUpperCase(),
+                   area.withTrimmedRight(4), juce::Justification::centred, 1, 0.7f);
+}
+
 void Footswitch::paintButton(juce::Graphics &g, bool highlighted, bool down) {
   const auto size = juce::jmin(getWidth(), getHeight());
   const auto at = getLocalBounds().toFloat().getCentre().translated(

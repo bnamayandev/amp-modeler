@@ -61,7 +61,7 @@ EvilAmplifierEditor::EvilAmplifierEditor(EvilAmplifierProcessor &p)
   prevPreset.onClick = [this] { stepPreset(-1); };
   nextPreset.onClick = [this] { stepPreset(1); };
   savePreset.onClick = [this] { savePresetDialog(); };
-  savePreset.setTooltip("Save the current settings as a user preset");
+  savePreset.setTooltip("Save the current settings, capture and IR as a user preset");
   gui::setPrimary(savePreset);
   refreshPresetList();
   canvas.addAndMakeVisible(settingsButton);
@@ -863,7 +863,7 @@ void EvilAmplifierEditor::stepPreset(int delta) {
 void EvilAmplifierEditor::savePresetDialog() {
   auto *window = new juce::AlertWindow(
       "Save preset",
-      "Name your preset. It is saved to\n" +
+      "Name your preset. It is saved, with its capture and IR, to\n" +
           PresetManager::getUserPresetDirectory().getFullPathName(),
       juce::MessageBoxIconType::NoIcon, this);
   window->addTextEditor("name", audioProcessor.getPresets().getCurrentName());
@@ -877,13 +877,16 @@ void EvilAmplifierEditor::savePresetDialog() {
         // Runs before the window is deleted (deleteWhenDismissed below).
         if (safeThis == nullptr || result != 1)
           return;
-        juce::String error;
+        juce::String error, warning;
         if (!safeThis->audioProcessor.getPresets().saveUserPreset(
-                window->getTextEditorContents("name"), error)) {
+                window->getTextEditorContents("name"), error, &warning)) {
           juce::AlertWindow::showMessageBoxAsync(
               juce::MessageBoxIconType::WarningIcon, "Preset not saved", error);
           return;
         }
+        if (warning.isNotEmpty())
+          juce::AlertWindow::showMessageBoxAsync(
+              juce::MessageBoxIconType::WarningIcon, "Preset saved", warning);
         safeThis->refreshPresetList();
       }),
       true);

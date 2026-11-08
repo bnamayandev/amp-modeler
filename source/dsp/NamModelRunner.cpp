@@ -1,5 +1,7 @@
 #include "NamModelRunner.h"
 
+#include "Loudness.h"
+
 #include <NAM/dsp.h>
 
 #include <algorithm>
@@ -65,6 +67,35 @@ void NamModelRunner::prepare(double hostSampleRate, int maxHostBlockSize) {
                           toHostRate.maxOutputsFor(maxModelBlock) + 16),
                  0.0f);
   pendingCount = latency; // already zero
+}
+
+void NamModelRunner::measureLevel() {
+  constexpr int block = 1024;
+  // Silence first, long enough for any DC the model puts out to have settled out
+  // of the K-weighting's high-pass before the guitar comes in. DC can't be heard,
+  // and the thump of it starting isn't the model's level.
+  const auto lead = (size_t)(0.1 * loudness::rate);
+  std::vector<float> played(lead, 0.0f);
+  const auto &guitar = loudness::referenceGuitar();
+  played.insert(played.end(), guitar.begin(), guitar.end());
+  prepare(loudness::rate, block);
+  for (size_t start = 0; start < played.size(); start += block)
+    process(played.data() + start, played.data() + start,
+            (int)std::min<size_t>(block, played.size() - start));
+  preparedHostRate = 0.0; // it has played: it's not ready for a host as it is
+
+  auto weighted = loudness::kWeighted(std::move(played));
+  weighted.erase(weighted.begin(), weighted.begin() + (long)lead);
+  const auto level = loudness::levelDb(weighted);
+  if (!std::isfinite(level))
+    return; // a model that puts out NaN plays as it is
+  info.hasLevel = true;
+  info.levelDb = level;
+  matchGain = (float)std::pow(
+      10.0, std::clamp(loudness::targetDb - level, -loudness::maxCorrectionDb,
+                       loudness::maxCorrectionDb) /
+                20.0);
+  referenceOutput = std::make_shared<const std::vector<float>>(std::move(weighted));
 }
 
 bool NamModelRunner::isPreparedFor(double hostSampleRate,

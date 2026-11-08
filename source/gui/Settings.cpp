@@ -5,6 +5,7 @@
 namespace evil::gui {
 namespace {
 constexpr auto accentHueKey = "accentHue";
+constexpr auto normaliseVolumeKey = "normaliseVolume";
 
 juce::PropertiesFile::Options fileOptions() {
   juce::PropertiesFile::Options options;
@@ -33,9 +34,30 @@ void Settings::setAccentHue(float hue) {
   sendChangeMessage();
 }
 
+bool Settings::isNormalisingVolume() const {
+  return file.getBoolValue(normaliseVolumeKey, true);
+}
+
+void Settings::setNormalisingVolume(bool on) {
+  if (on == isNormalisingVolume())
+    return;
+  getFile().getParentDirectory().createDirectory();
+  file.setValue(normaliseVolumeKey, on);
+  sendChangeMessage();
+}
+
 SettingsPanel::SettingsPanel(std::optional<AppActions> app)
     : hasAppSection(app.has_value()) {
   settings->addChangeListener(this);
+  normaliseButton.setToggleState(settings->isNormalisingVolume(),
+                                 juce::dontSendNotification);
+  normaliseButton.setTooltip(
+      "Plays every capture and IR at the same volume, measured as each one "
+      "loads. Off, each plays as loud as it was made");
+  normaliseButton.onClick = [this] {
+    settings->setNormalisingVolume(normaliseButton.getToggleState());
+  };
+  addAndMakeVisible(normaliseButton);
   if (app.has_value()) {
     addAction(audioButton, "Interface, inputs, sample rate and buffer size",
               std::move(app->audioSettings));
@@ -50,6 +72,12 @@ SettingsPanel::SettingsPanel(std::optional<AppActions> app)
 }
 
 SettingsPanel::~SettingsPanel() { settings->removeChangeListener(this); }
+
+void SettingsPanel::changeListenerCallback(juce::ChangeBroadcaster *) {
+  normaliseButton.setToggleState(settings->isNormalisingVolume(),
+                                 juce::dontSendNotification);
+  repaint();
+}
 
 void SettingsPanel::addAction(juce::TextButton &button,
                               const juce::String &tooltip,
@@ -81,6 +109,10 @@ void SettingsPanel::resized() {
     resetButton.setBounds(row);
     b.removeFromTop(20);
   }
+  levelsCaption = b.removeFromTop(16);
+  b.removeFromTop(8);
+  normaliseButton.setBounds(b.removeFromTop(26));
+  b.removeFromTop(20);
   caption = b.removeFromTop(16);
   b.removeFromTop(14);
   swatchRow = b.removeFromTop(24);
@@ -101,13 +133,16 @@ void SettingsPanel::paint(juce::Graphics &g) {
 
   g.setFont(gui::caption());
   g.setColour(muted);
+  g.setColour(line);
+  if (hasAppSection)
+    g.fillRect(levelsCaption.withY(levelsCaption.getY() - 10).withHeight(1));
+  g.fillRect(caption.withY(caption.getY() - 10).withHeight(1));
+  g.setColour(muted);
   if (hasAppSection) {
     g.drawText("AUDIO", audioCaption, juce::Justification::centredLeft);
     g.drawText("STATE", stateCaption, juce::Justification::centredLeft);
-    g.setColour(line);
-    g.fillRect(caption.withY(caption.getY() - 10).withHeight(1));
-    g.setColour(muted);
   }
+  g.drawText("LEVELS", levelsCaption, juce::Justification::centredLeft);
   g.drawText("ACCENT", caption, juce::Justification::centredLeft);
   g.setFont(readout(13.0f));
   g.setColour(textSoft);

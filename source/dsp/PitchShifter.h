@@ -4,17 +4,22 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
+#include <optional>
+#include <vector>
+
 namespace evil {
 /** Transposer: polyphonic delay-line pitch shifter with waveform-aligned
-   splices.
+   splices, adding only as much delay as the signal needs.
 
-    A read tap moves through a 32 ms window of recent input at the speed the
-   pitch ratio needs (faster than real time to go up, slower to go down). When
-   it nears the end of the window it jumps back by about a window, and the old
-   and new tap crossfade over 8 ms. The jump length is chosen within a period
-   of the lowest guitar note to line the two waveforms up (the lag with the
-   best normalised correlation), so splices don't beat or warble the way
-   fixed-length grains do. Costs ~16 ms of average delay.
+    A read tap moves through recent input at the speed the pitch ratio needs
+   (faster than real time to go up, slower to go down). When it runs out of room
+   it jumps and the old and new tap crossfade. The delay heard is how far behind
+   the input the tap is, which sweeps between nearly nothing and the length of
+   the jump, so jumps are kept as short as a clean splice allows: the shortest
+   lag at which the two waveforms line up (the normalised correlation of what's
+   behind each). That's about a period of what's being played, so ~2-5 ms of
+   average delay up the neck and ~6-8 ms on a low E. Chords only line up at
+   longer lags, at worst the 24 ms of a low-E power chord (~13 ms on average).
 
     At 0 semitones the shifter is skipped (bit-exact pass-through); engaging or
    leaving it crossfades. */
@@ -28,14 +33,30 @@ public:
 
 private:
   void shift(float *data, int n, float ratio) noexcept;
-  float findSplice(float from, float lo, float hi) const noexcept;
+  void startSplice(float newDelay, int length) noexcept;
+  /** The delay to jump to from `from`, `direction` being +1 for further behind
+      the input and -1 for closer to it, by a lag in [nearLag, farLag]. Empty if
+      nothing lines up well enough, unless `mustSplice`. */
+  std::optional<float> findSplice(float from, int direction, int nearLag,
+                                  int farLag, bool mustSplice) noexcept;
+  float refine(int from, int coarse, int lowest, int highest) const noexcept;
+  float similarity(int from, int candidate, int step) const noexcept;
 
   DelayLine line;
-  float minDelay = 4.0f, maxDelay = 1540.0f;
-  int spliceLength = 384, searchLength = 600, correlationLength = 480;
+  static constexpr float minDelay = 2.0f;
+  float maxDelay = 1500.0f;
+  int shortestLag = 120, longestLag = 1200, retryStep = 48;
+  int longestSplice = 384, correlationLength = 480, stride = 4;
+
+  // Preallocated for the search: what's behind the tap, the candidates' audio,
+  // their running energy, and each candidate's score (nearest first).
+  std::vector<float> tapSegment, candidates, scores;
+  std::vector<double> energy;
 
   float delay = 0.0f, fadingDelay = 0.0f; // current tap, tap being faded out
-  int splicePosition = 0;                 // == spliceLength: no splice running
+  float searchAt = 0.0f;  // going down: how far the tap drifts before a search
+  int spliceLength = 384; // of the splice running or last run
+  int splicePosition = 384; // >= spliceLength: no splice running
   bool started = false;
 
   int fadeLength = 480, fadePosition = 0; // engage/leave crossfade

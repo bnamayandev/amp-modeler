@@ -4,6 +4,7 @@
 #include "agent/Session.h"
 #include "dsp/SampleTap.h"
 #include "dsp/SignalChain.h"
+#include "gui/Settings.h"
 #include "state/Parameters.h"
 #include "state/PresetManager.h"
 
@@ -147,6 +148,8 @@ private:
   std::atomic<int> reportedLatency{0};
 
   juce::SharedResourcePointer<SharedLogFile> logFile;
+  // The player's preferences, for whether to normalise the volume.
+  juce::SharedResourcePointer<gui::Settings> appSettings;
   juce::CriticalSection irErrorLock;
   juce::String lastIrError;
   juce::String lastLoggedModelSource;

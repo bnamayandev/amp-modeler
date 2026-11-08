@@ -28,11 +28,24 @@ struct ToneReading {
   // Harmonic distortion of a single note, picked gently and hard.
   float distortionLightPercent = 0.0f, distortionHardPercent = 0.0f;
   float distortionLightCaptureAlone = 0.0f, distortionHardCaptureAlone = 0.0f;
+
+  /** A band this far under the capture alone's loudest has next to nothing in it. */
+  static constexpr float emptyBandDb = -70.0f;
+  /** What the pedals and EQ have done to a band, unless the capture alone has too
+      little there to compare with: a rise from nothing is no number at all. */
+  std::optional<float> bandChangeDb(size_t band) const {
+    if (bandDbCaptureAlone[band] < emptyBandDb)
+      return {};
+    return bandDb[band] - bandDbCaptureAlone[band];
+  }
 };
 
 struct LoadedCapture {
   juce::String name, source;
+  // How loud it plays, on a scale that's only for comparing captures: the same for
+  // all of them when the amp matches levels.
   std::optional<double> loudnessDb;
+  juce::String gearType; // what the file says it captured, if it says: "amp_cab"
 };
 
 /** The amp as the agent sees it: the sound-shaping controls and what's loaded.
@@ -123,6 +136,11 @@ private:
   Outcome loadCapture(const ToolCall &);
 
   bool setOutput(float db);
+  /** Moves the cabinet switch if it has to, and says whether it moved. */
+  bool setCabinetOn(bool on);
+  /** A new IR plays unless the capture has its own cabinet. Says which on result,
+      and returns whether it's playing. */
+  bool switchCabinetForNewIr(juce::var &result);
   std::optional<ParameterInfo> findParameter(const juce::String &id) const;
   /** Asks for the sign-in code if need be, once. Empty if ready. */
   juce::String ensureConnected();

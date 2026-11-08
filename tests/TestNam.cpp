@@ -97,6 +97,7 @@ TEST_CASE("The bundled capture loads with its metadata", "[nam]") {
   CHECK(info.architecture == "WaveNet");
   CHECK(info.sampleRate == 48000.0);
   CHECK(info.hasLoudness);
+  CHECK(info.hasLevel);
   CHECK(info.testEsr > 0.0);
   CHECK(info.testEsr < 0.05);
 }

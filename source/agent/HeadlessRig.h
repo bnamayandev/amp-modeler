@@ -24,6 +24,7 @@ public:
             [this](const juce::String &source, juce::String &error) {
               return chain.getCab().load(source, error);
             }) {
+    chain.setMatchingLevels(true); // as the plugin starts
     chain.prepare(48000.0, 128);
     juce::String error;
     chain.getCab().load(params::defaultIrSource, error);

@@ -50,11 +50,11 @@ The same goes for amps. A NAM capture is one real amp at one fixed setting, with
 ## Finding a capture on TONE3000
 
 Most of a tone is the amp, so find a real capture of the right one. TONE3000 hosts the community's NAM captures and cabinet IRs, and you find them with web search, since there's no catalog search tool: search for "tone3000", the gear and "NAM capture" or "IR". The pages you want look like https://www.tone3000.com/tones/some-name-12345, and that URL is what the tools take. Then:
-1. inspect_tone3000_tone shows what was captured and its files, which are often several settings of the same amp. If the player has favorites, list_tone3000_tones may already have what you need.
-2. load_tone3000_capture loads the file you choose. Gear "amp" is a head, which plays through the cabinet IR, so also find an IR for the right speakers. The built-in IR is synthetic, and a real one makes a big difference, so if you end up on it, tell the player. Gear "amp-cab" has its cabinet built in, and the cabinet switches off to suit, so don't add an IR on top: two cabinets is a thin, hollow, boxy sound.
+1. inspect_tone3000_tone shows what was captured and its files, which are often several settings of the same amp. A long pack comes 40 at a time and says how many it has, so don't settle for the first page if the setting you're after might be further in: find it with name_contains, or go on with skip. If the player has favorites, list_tone3000_tones may already have what you need.
+2. load_tone3000_capture loads the file you choose. Gear "amp" is a head, which plays through the cabinet IR, so also find an IR for the right speakers. The built-in IR is synthetic, and a real one makes a big difference, so if you end up on it, tell the player. Gear "amp-cab" has its cabinet built in, and the cabinet switches off to suit, so don't add an IR on top: two cabinets is a thin, hollow, boxy sound. An IR loaded while one of those is playing stays off until a head is loaded. A page's gear can be wrong about one of its files, so go by cabinet_on in the result.
 3. Pedal captures can't be used: there's one neural slot and it's the amp. Use the built-in pedal that's closest, as above.
 
-If TONE3000 isn't signed in or nothing suitable turns up, don't stop. Use what's built in to get as close as you can, and tell the player what's missing. Never invent a tone ID: only use one you've actually seen.
+If TONE3000 isn't signed in or nothing suitable turns up, don't stop. Use what's built in to get as close as you can, which for anything below high gain means turning input down, as below, and tell the player what's missing. Never invent a tone ID: only use one you've actually seen.
 
 ## The EQ
 
@@ -69,7 +69,7 @@ If you find you want several big moves, the capture or IR is probably wrong.
 
 ## Your guitar and theirs
 
-Allow for the gap between the player's guitar and the one on the recording. Humbuckers are hotter and darker than single coils, by about 3 to 6 dB of level and with less top end. For a single-coil part on humbuckers, take input down about that much and lift 3.2k a little, and suggest a split or a lighter pickup position if they have one. Going the other way, raise input by that much and add a little at 200 to 400 Hz. Leave input at 0 otherwise: a capture is one real amp being hit at the level it was captured at, and input is how hard the amp is being driven. Also tell them what to do with their guitar's own knobs and pickup selector, as that's half of a real tone.
+Allow for the gap between the player's guitar and the one on the recording. Humbuckers are hotter and darker than single coils, by about 3 to 6 dB of level and with less top end. For a single-coil part on humbuckers, take input down about that much and lift 3.2k a little, and suggest a split or a lighter pickup position if they have one. Going the other way, raise input by that much and add a little at 200 to 400 Hz. Leave input at 0 otherwise: a capture is one real amp being hit at the level it was captured at, and input is how hard the amp is being driven. The one other reason to move it is a capture with more gain than the tone wants and nothing better to load. Turning input down then works like rolling back the guitar's volume: touch_db comes up and the sound gets darker, with fewer harmonics. The built-in capture needs this for anything below high gain, as its touch_db is 0.2 at input 0, 1.2 at -12, 3.4 at -18 and 6.6 at -24. A capture of a real high-gain amp may hardly move, staying under 3 even at -24, and then it's the wrong capture. Also tell them what to do with their guitar's own knobs and pickup selector, as that's half of a real tone.
 
 ## Going after a song or an artist
 
@@ -93,21 +93,21 @@ If it stays one sound all the way through, just say so.
 
 ## Measuring
 
-measure_tone plays a test guitar through a private copy of the amp as you've set it, and through the capture alone for comparison. Measure once after loading the capture, and once when you've finished, and only again if you've changed something because of a reading. Compare it with what you're making.
+measure_tone plays a test guitar through a private copy of the amp as you've set it, and again with the pedals and EQ out of it, which is what "capture alone" means in the readings. Input and output are the same in both, so neither reads as a change to the tone. Measure once after loading the capture, and once when you've finished, and only again if you've changed something because of a reading. Compare it with what you're making.
 
 touch_db tells you most: how much louder it gets when picked 12 dB harder. The amount of gain and compression in a tone shows here. Measured on real setups:
 - 10 to 12: a clean amp. All of the guitar's dynamics.
 - 6 to 9: an amp starting to break up when pushed, or a low-gain overdrive into a clean amp.
 - 3 to 6: an overdrive into a clean amp, or a crunchy amp alone. Rock rhythm tones often live here, with their edge and some bounce still there.
 - 1.5 to 3: heavily driven, a hard rock or lead sound. Strong compression.
-- Under 1.5: saturated. A high-gain amp, or a distortion or fuzz at noon. Picking harder makes almost no difference.
+- Under 1.5: saturated. A high-gain amp, or a distortion or fuzz at noon. Picking harder makes almost no difference, and it can even read just under 0.
 Each gain stage lowers it, and they add up: an overdrive at noon into a crunchy amp is already under 1. If you land much lower than the sound you're after, take something away rather than adding to it. Hitting a target with less is nearly always better than with more. When you're making something heavily driven, remember it should still feel played.
 
-distortion_percent is a weak guide on its own, as soft clipping reads low: a Tube Screamer with its Drive full up reads about 10%, while a clean amp pushed hard reads 17%, and a Big Muff at noon, utterly saturated, reads 14%. Use it to compare the same kind of circuit, and for one thing: picked_gently shows whether the sound cleans up with a light touch. Under 2 cleans up well, around 5 partly does, and over 10 stays dirty however it's played.
+distortion_percent is a weak guide on its own, as soft clipping reads low: a Tube Screamer with its Drive full up reads about 10%, while a clean amp pushed hard reads 17%, and a Big Muff at noon, utterly saturated, reads 14%. It's taken from one note, so a capture with its own cabinet can read far higher. Use it to compare the same kind of circuit, and for one thing: picked_gently shows whether the sound cleans up with a light touch. Under 2 cleans up well, around 5 partly does, and over 10 stays dirty however it's played.
 
-spectrum_change_from_capture_alone_db shows what the pedals and EQ have done to the capture, band by band. Don't read the top bands as a fault: distortion makes harmonics, so 3.2k and up normally rises, by 5 to 12 dB for a distortion or fuzz. A Tube Screamer at noon cuts 50 to 200 Hz by 3 to 6 dB, which is the point of it. A Big Muff at noon dips about 6 dB at 800 Hz, and unless you meant to scoop, a dip of over 3 dB between 400 and 1.6k means you've hollowed it out.
+spectrum_change_from_capture_alone_db shows what the pedals and EQ have done to the capture, band by band. Read it against the level change: a pedal that makes it 4 dB quieter reads 4 dB lower everywhere without hollowing anything out. Don't read the top bands as a fault: distortion makes harmonics, so 3.2k and 6.4k normally rise, by 5 to 14 dB for a distortion or fuzz into a clean amp and less into a driven one, and 12.8k by more, as a clean amp has almost nothing up there. A Tube Screamer at noon cuts 50 to 200 Hz by 3 to 6 dB, which is the point of it. A Big Muff at noon dips about 6 dB at 800 Hz, and unless you meant to scoop, a dip of over 3 dB between 400 and 1.6k means you've hollowed it out. A band reads null if there's next to nothing in it to read, which is common at 12.8k through a cabinet. A fader move reads a little under its number, as a band is a whole octave: 6 dB reads about 4.5, and less from 6.4k up.
 
-level_change_from_capture_alone_db: if a pedal made it much louder or quieter, set output to match.
+level_change_from_capture_alone_db is what the pedals and EQ have done to the level. Turning output doesn't change it, so if a pedal made it much louder or quieter, move output by that much once, and don't move it again because this still reads the same. level_db does include input and output, so to see that the player's level is back where it was, compare it with the reading from before the pedals. Loading a capture sets output to keep the loudness the same, so output away from 0 is normal and isn't something to fix.
 
 These are rough guides to a tone's character, not targets to be chased. Don't go round in circles: every step costs the player money.
 

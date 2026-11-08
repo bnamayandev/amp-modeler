@@ -18,9 +18,14 @@ struct ModelInfo {
   juce::String name;
   juce::String architecture;
   juce::String gear; // "make model", if the metadata has it
+  juce::String gearType; // "amp", "amp_cab" and so on, if the metadata has it
   double sampleRate = 48000.0;
   bool hasLoudness = false;
-  double loudnessDb = 0.0;
+  double loudnessDb = 0.0; // what the file says, from NAM's trainer
+  // Measured as it loads: the reference guitar through it, as loudness::levelDb()
+  // reads it. A file's own figure is too far off to match levels with.
+  bool hasLevel = false;
+  double levelDb = 0.0;
   double testEsr =
       -1.0; // held-out ESR from the training metadata; < 0 if unknown
   double validationEsr = -1.0;
@@ -50,6 +55,17 @@ public:
    */
   void process(const float *in, float *out, int n) noexcept;
 
+  /** Plays the reference guitar through it, for its level. Leaves it needing
+      prepare() again before it goes anywhere near a host. */
+  void measureLevel();
+  /** Its output for the reference guitar, K-weighted, for matching an IR's level
+      to it; null if it couldn't be measured. Never changes once measured. */
+  std::shared_ptr<const std::vector<float>> getReferenceOutput() const {
+    return referenceOutput;
+  }
+  /** The gain that puts it at loudness::targetDb, or 1 if unmeasured. */
+  float getMatchGain() const noexcept { return matchGain; }
+
   int getLatencySamples() const noexcept { return latency; }
   bool isResampling() const noexcept { return resampling; }
 
@@ -61,6 +77,8 @@ private:
   std::unique_ptr<nam::DSP> model;
   ModelInfo info;
   double modelRate = 48000.0;
+  std::shared_ptr<const std::vector<float>> referenceOutput;
+  float matchGain = 1.0f;
 
   double preparedHostRate = 0.0;
   int preparedBlockSize = 0;

@@ -10,7 +10,12 @@ namespace evil {
 
     A preset is every parameter value plus the model and IR sources. Parameters
    missing from a preset fall back to their defaults, so old presets keep
-   working as parameters are added. Message thread only. */
+   working as parameters are added.
+
+    A user preset also carries copies of its model and IR files, so it's one file
+   that keeps its sound if the originals move or it goes to another computer. They
+   only come back out if the originals aren't there as they were. Message thread
+   only. */
 class PresetManager {
 public:
   struct Sources {
@@ -22,7 +27,12 @@ public:
                 std::function<void(const Sources &)> applySources);
 
   static juce::File getUserPresetDirectory();
+  /** Where a preset's carried files come back out to, when they have to. */
+  static juce::File getSavedFilesDirectory();
+  static void setUserPresetDirectoryForTesting(const juce::File &);
   static constexpr const char *fileExtension = ".evilpreset";
+  /** Beside a file, who made it and what it is. A preset carries that too. */
+  static constexpr const char *attributionFileName = "attribution.json";
 
   juce::StringArray getNames() const;
   int getNumFactoryPresets() const { return factory.size(); }
@@ -30,7 +40,10 @@ public:
   juce::String getCurrentName() const;
 
   bool load(int index);
-  bool saveUserPreset(const juce::String &name, juce::String &error);
+  /** False, with error, if nothing was saved. If it was but a file couldn't go
+      with it, warning says so. */
+  bool saveUserPreset(const juce::String &name, juce::String &error,
+                      juce::String *warning = nullptr);
   void refreshUserPresets();
 
   /** The sound as it is now, in preset form, and putting one back. The agent's

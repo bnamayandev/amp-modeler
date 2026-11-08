@@ -48,9 +48,20 @@ public:
     float outputDb = 0.0f;
   };
 
+  SignalChain();
+
   void prepare(double sampleRate, int maxBlockSize);
   void reset() noexcept;
   void process(float *data, int n, const Settings &settings) noexcept;
+
+  /** Plays every model and IR at the same level, measured as each one loads,
+      rather than at whatever level it was made at. Off to start with; the plugin
+      turns it on unless the player has turned it off. Non-audio thread. */
+  void setMatchingLevels(bool shouldMatch) {
+    models.setMatchingLevels(shouldMatch);
+    cab.setMatchingLevels(shouldMatch);
+  }
+  bool isMatchingLevels() const noexcept { return models.isMatchingLevels(); }
 
   /** Total latency of the model playing now. */
   int getLatencySamples() const noexcept {
@@ -80,8 +91,9 @@ private:
   OverdrivePedal overdrive;
   DistortionPedal distortion;
   BoostPedal boost;
-  ModelManager models;
+  // Before the models, so it outlives them: their loading thread calls into it.
   CabSim cab;
+  ModelManager models;
   Equaliser eq;
   PhaserPedal phaser;
   FlangerPedal flanger;

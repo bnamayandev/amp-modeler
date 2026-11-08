@@ -37,6 +37,9 @@ EvilAmplifierProcessor::EvilAmplifierProcessor()
   if (wrapperType == wrapperType_Standalone)
     standalone::prepareAudioDevices(); // the audio device opens after this
   ModelManager::enableFastTanh(); // before any model is built
+  // Before anything loads, so each is measured to its level just the once.
+  chain.setMatchingLevels(appSettings->isNormalisingVolume());
+  appSettings->addChangeListener(this);
   juce::String error;
   if (!chain.getCab().load(params::defaultIrSource, error))
     log("Default IR failed to load: " + error);
@@ -47,6 +50,7 @@ EvilAmplifierProcessor::EvilAmplifierProcessor()
 
 EvilAmplifierProcessor::~EvilAmplifierProcessor() {
   stopTimer();
+  appSettings->removeChangeListener(this);
   getModels().removeChangeListener(this);
 }
 
@@ -318,7 +322,16 @@ void EvilAmplifierProcessor::timerCallback() {
            : juce::String()));
 }
 
-void EvilAmplifierProcessor::changeListenerCallback(juce::ChangeBroadcaster *) {
+void EvilAmplifierProcessor::changeListenerCallback(juce::ChangeBroadcaster *source) {
+  if (source == &appSettings.get()) {
+    const bool normalise = appSettings->isNormalisingVolume();
+    if (normalise != chain.isMatchingLevels()) {
+      chain.setMatchingLevels(normalise);
+      log(normalise ? "Normalising the volume of captures and IRs"
+                    : "Playing captures and IRs at their own volume");
+    }
+    return;
+  }
   const auto status = getModels().getStatus();
   if (status.state == ModelManager::State::ready &&
       status.info.source != lastLoggedModelSource) {

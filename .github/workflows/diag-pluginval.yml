@@ -17,10 +17,23 @@ jobs:
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev \
             libxrender-dev libgl1-mesa-dev libjack-jackd2-dev libcurl4-openssl-dev
 
-      - name: Build the VST3, Release with symbols
+      - name: Build everything, Release with symbols
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-g -DCMAKE_C_FLAGS=-g
-          cmake --build build --target EvilAmplifier_VST3 --parallel 4
+          cmake --build build --config Release --parallel 4
+
+      # The same steps CI runs before pluginval, in the same job, so the plugin
+      # sees whatever they leave behind.
+      - name: Unit tests and benchmark, as CI runs them
+        shell: bash
+        run: |
+          touch "$RUNNER_TEMP/marker"
+          xvfb-run -a build/tests/evil_tests_artefacts/Release/evil_tests "~[cpu]" | tail -3
+          build/evil-cli_artefacts/Release/evil-cli bench --seconds 60 --block 128 --rate 48000 | tail -2
+          build/evil-cli_artefacts/Release/evil-cli bench --seconds 60 --block 128 --rate 44100 | tail -2
+          echo "::group::files written under HOME"
+          find "$HOME" -newer "$RUNNER_TEMP/marker" -type f -not -path "*/work/*" 2>/dev/null | head -100
+          echo "::endgroup::"
 
       - name: pluginval 30 times, backtrace every crash
         shell: bash

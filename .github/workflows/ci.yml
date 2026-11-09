@@ -23,7 +23,7 @@ jobs:
             exe: ""
             configure: -G Ninja -DCMAKE_BUILD_TYPE=Release
           - name: macOS
-            os: macos-14
+            os: macos-15
             pluginval_zip: pluginval_macOS.zip
             pluginval: ./pluginval.app/Contents/MacOS/pluginval
             exe: ""

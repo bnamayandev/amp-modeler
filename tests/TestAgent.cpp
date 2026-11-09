@@ -1819,7 +1819,10 @@ TEST_CASE("The real amp: controls, sources and undo", "[agent]") {
   CHECK(rig.state.getRawParameterValue(params::fuzzAmount)->load() == Catch::Approx(0.5f));
   CHECK(rig.chain.getModels().getRequestedSource() == "builtin:BlackstarHT1");
   CHECK(amp.getModel().source == "builtin:BlackstarHT1"); // back and playing
-  CHECK(rig.state.getRawParameterValue(params::output)->load() == Catch::Approx(0.0f));
+  // Not exactly 0: snapping to the range's 0.001 step is -40 + 0.001 * 40000,
+  // which a fused multiply-add (Apple Silicon) leaves at 1.9e-6.
+  CHECK(rig.state.getRawParameterValue(params::output)->load() ==
+        Catch::Approx(0.0f).margin(1.0e-4));
 
   CHECK(amp.loadModel("/no/such/file.nam").isNotEmpty());
 }

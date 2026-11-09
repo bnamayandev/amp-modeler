@@ -119,6 +119,23 @@ TEST_CASE("Bad model files fail with a message instead of crashing", "[nam]") {
     CHECK(error.isNotEmpty());
     CHECK(models.getStatus().state == ModelManager::State::error);
   }
+
+  // JSON that parses but lacks a field NAM Core reads. Its lookups don't check
+  // for a missing key in a release build, so these read freed memory and
+  // crashed now and then, until JSON_ASSERT threw (cmake/JsonAssert.h).
+  for (const auto *text :
+       {R"({"version":"0.5.4"})", R"({"error":"not found"})",
+        R"({"version":"0.5.4","architecture":"Linear","config":{},"weights":[]})",
+        R"({"version":"0.5.4","architecture":"LSTM","config":{},"weights":[]})",
+        R"({"version":"0.5.4","architecture":"ConvNet","config":{},"weights":[]})"}) {
+    INFO(text);
+    const auto f = dir.getChildFile("incomplete.nam");
+    f.replaceWithText(text);
+    juce::String error;
+    CHECK_FALSE(models.loadSynchronously(f.getFullPathName(), error));
+    INFO(error);
+    CHECK(error.contains("missing a field"));
+  }
   dir.deleteRecursively();
 }
 

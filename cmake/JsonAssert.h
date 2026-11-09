@@ -1,5 +1,5 @@
 #pragma once
-// Force-included, via nam_core, into every C++ file that can see nlohmann::json.
+// Force-included, via nam_core, into every file of every target that links it.
 //
 // nlohmann guards its checks with JSON_ASSERT, which is assert() and so compiled
 // out of a release build. NAM Core reads a model's fields with operator[] on a
@@ -15,7 +15,10 @@
 // don't warn about those call sites.
 //
 // It has to be the same in every file that includes json.hpp, hence the force
-// include rather than a define in any one source.
+// include rather than a define in any one source. Those targets also compile
+// JUCE's C sources, and the Visual Studio generator can't give C and C++ files
+// different flags, so this has to be harmless in C.
+#ifdef __cplusplus
 #include <stdexcept>
 
 namespace evil {
@@ -25,3 +28,4 @@ namespace evil {
 } // namespace evil
 
 #define JSON_ASSERT(x) ((x) ? static_cast<void>(0) : ::evil::jsonAssertFailed())
+#endif

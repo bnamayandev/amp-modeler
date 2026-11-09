@@ -51,16 +51,15 @@ target_compile_definitions(nam_core PUBLIC
     NAM_ENABLE_A2_FAST)       # upstream default: fast path for "A2" WaveNet models
 set_target_properties(nam_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-# Make nlohmann's JSON_ASSERT throw (see JsonAssert.h). PUBLIC so every C++ file
-# that includes json.hpp gets the same definition (consumers also compile JUCE's
-# C sources, hence COMPILE_LANGUAGE). Force-included because MSVC's /D can't
-# define a function-like macro.
+# Make nlohmann's JSON_ASSERT throw (see JsonAssert.h). PUBLIC so every file that
+# includes json.hpp gets the same definition. Force-included because MSVC's /D
+# can't define a function-like macro. It reaches C files too (the Visual Studio
+# generator can't tell them apart), so the header does nothing in C.
 set(EVIL_JSON_ASSERT_H "${CMAKE_CURRENT_LIST_DIR}/JsonAssert.h")
 if(MSVC)
-    target_compile_options(nam_core PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:/FI${EVIL_JSON_ASSERT_H}>")
+    target_compile_options(nam_core PUBLIC "/FI${EVIL_JSON_ASSERT_H}")
 else()
-    target_compile_options(nam_core PUBLIC
-        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include \"${EVIL_JSON_ASSERT_H}\">")
+    target_compile_options(nam_core PUBLIC "SHELL:-include \"${EVIL_JSON_ASSERT_H}\"")
 endif()
 
 if(MSVC)

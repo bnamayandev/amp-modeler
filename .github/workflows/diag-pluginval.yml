@@ -1,0 +1,53 @@
+# Throwaway: reproduce the intermittent segfault pluginval hits on Linux after
+# printing SUCCESS, and print a backtrace from its core dump. Not for merging.
+name: Diagnose pluginval crash
+
+on: push
+
+jobs:
+  pluginval-loop:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build xvfb gdb libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev libxinerama-dev libxrandr-dev \
+            libxrender-dev libgl1-mesa-dev libjack-jackd2-dev libcurl4-openssl-dev
+
+      - name: Build the VST3, Release with symbols
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_FLAGS=-g -DCMAKE_C_FLAGS=-g
+          cmake --build build --target EvilAmplifier_VST3 --parallel 4
+
+      - name: pluginval 30 times, backtrace every crash
+        shell: bash
+        run: |
+          curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip"
+          unzip -q pluginval.zip
+          mkdir -p cores
+          ulimit -c unlimited
+          sudo sysctl -q -w kernel.core_pattern="$PWD/cores/core.%e.%p"
+          vst3="build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3"
+          crashes=0
+          for i in $(seq 1 30); do
+            set +e
+            xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process "$vst3" > "run$i.log" 2>&1
+            code=$?
+            set -e
+            echo "run $i: exit $code"
+            [ $code -eq 0 ] && continue
+            crashes=$((crashes + 1))
+            tail -4 "run$i.log"
+            for c in cores/core.*; do
+              [ -e "$c" ] || continue
+              echo "::group::backtrace from $c"
+              gdb -q -batch -ex "info sharedlibrary" -ex "thread apply all bt 40" ./pluginval "$c" 2>&1 \
+                | grep -v "^\[New LWP"
+              echo "::endgroup::"
+              rm -f "$c"
+            done
+          done
+          echo "$crashes crashes in 30 runs"

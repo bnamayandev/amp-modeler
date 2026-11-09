@@ -35,32 +35,40 @@ jobs:
           find "$HOME" -newer "$RUNNER_TEMP/marker" -type f -not -path "*/work/*" 2>/dev/null | head -100
           echo "::endgroup::"
 
-      - name: pluginval 30 times, backtrace every crash
+      # The check proposed for ci.yml, run 30 times. Each crash is also checked
+      # against a frame that isn't there, which must be rejected.
+      - name: Proposed CI check, 30 times
         shell: bash
         run: |
           curl -sSfL -o pluginval.zip "https://github.com/Tracktion/pluginval/releases/download/v1.0.4/pluginval_Linux.zip"
           unzip -q pluginval.zip
-          mkdir -p cores
-          ulimit -c unlimited
-          sudo sysctl -q -w kernel.core_pattern="$PWD/cores/core.%e.%p"
+          pluginval=./pluginval
           vst3="build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3"
-          crashes=0
+          # check <pluginval exit code> <frame to accept>: exit status 0 = CI would pass
+          check() {
+            local code=$1 frame=$2
+            [ "$code" -eq 0 ] && return 0
+            grep -qx "SUCCESS" pluginval.log || return "$code"
+            shopt -s nullglob; local cores=(cores/core.*); shopt -u nullglob
+            [ ${#cores[@]} -eq 1 ] || { echo "expected one core, found ${#cores[@]}"; return "$code"; }
+            local frames
+            frames=$(gdb -q -batch -ex "bt 3" "$pluginval" "${cores[0]}" 2>/dev/null | grep "^#")
+            echo "$frames" | cut -c1-160
+            grep -q "$frame" <<<"$frames" || return "$code"
+            echo "accepted: pluginval passed, then crashed on exit in its own VST3 RunLoop"
+          }
+          passed=0 accepted=0 failed=0 wrongly_accepted=0
           for i in $(seq 1 30); do
+            rm -rf cores; mkdir -p cores
+            ulimit -c unlimited
+            sudo sysctl -q -w kernel.core_pattern="$PWD/cores/core.%e.%p"
             set +e
-            xvfb-run -a ./pluginval --strictness-level 10 --validate-in-process "$vst3" > "run$i.log" 2>&1
+            xvfb-run -a "$pluginval" --strictness-level 10 --validate-in-process "$vst3" > pluginval.log 2>&1
             code=$?
             set -e
+            if [ $code -eq 0 ]; then passed=$((passed + 1)); echo "run $i: pass"; continue; fi
             echo "run $i: exit $code"
-            [ $code -eq 0 ] && continue
-            crashes=$((crashes + 1))
-            tail -4 "run$i.log"
-            for c in cores/core.*; do
-              [ -e "$c" ] || continue
-              echo "::group::backtrace from $c"
-              gdb -q -batch -ex "info sharedlibrary" -ex "thread apply all bt 40" ./pluginval "$c" 2>&1 \
-                | grep -v "^\[New LWP"
-              echo "::endgroup::"
-              rm -f "$c"
-            done
+            if check $code "RunLoop::Impl::registerEventHandler"; then accepted=$((accepted + 1)); else failed=$((failed + 1)); tail -5 pluginval.log; fi
+            if check $code "NoSuchFrame::thatIsNotThere" > /dev/null; then wrongly_accepted=$((wrongly_accepted + 1)); fi
           done
-          echo "$crashes crashes in 30 runs"
+          echo "RESULT: $passed passed, $accepted accepted host crashes, $failed failed, $wrongly_accepted wrongly accepted (must be 0)"

@@ -1,4 +1,5 @@
 #include "TestHelpers.h"
+#include "dsp/Chime.h"
 #include "dsp/Metronome.h"
 #include "dsp/SignalChain.h"
 #include "state/Parameters.h"
@@ -1049,6 +1050,52 @@ TEST_CASE("The metronome clicks on the beat and accents the bar",
   for (size_t i = 2400; i < y.size(); ++i)
     REQUIRE(y[i] == 0.25f);
   CHECK(metronome.getBeatInBar() == -1);
+}
+
+TEST_CASE("The chime is quiet, soft at the start, and then gone", "[chime]") {
+  Chime chime;
+  chime.prepare(rate);
+  const auto render = [&](std::vector<float> &l, std::vector<float> &r) {
+    for (size_t start = 0; start < l.size(); start += block) {
+      float *channels[] = {l.data() + start, r.data() + start};
+      chime.process(channels, 2, (int)std::min<size_t>(block, l.size() - start));
+    }
+  };
+
+  // Nothing until it's asked for.
+  std::vector<float> l((size_t)rate, 0.25f), r((size_t)rate, -0.5f);
+  render(l, r);
+  for (size_t i = 0; i < l.size(); ++i) {
+    REQUIRE(l[i] == 0.25f);
+    REQUIRE(r[i] == -0.5f);
+  }
+
+  chime.trigger();
+  std::vector<float> a((size_t)rate * 2, 0.0f), b(a.size(), 0.0f);
+  render(a, b);
+  float peak = 0.0f, biggestStep = 0.0f;
+  size_t last = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    REQUIRE(a[i] == b[i]); // the same on every channel
+    peak = std::max(peak, std::abs(a[i]));
+    if (i > 0)
+      biggestStep = std::max(biggestStep, std::abs(a[i] - a[i - 1]));
+    if (a[i] != 0.0f)
+      last = i;
+  }
+  INFO("peak " << juce::Decibels::gainToDecibels(peak) << " dBFS");
+  CHECK(peak > juce::Decibels::decibelsToGain(Chime::levelDb - 3.0f));
+  CHECK(peak < juce::Decibels::decibelsToGain(Chime::levelDb + 3.0f));
+  CHECK(std::abs(a[0]) < 1.0e-4f); // eases in rather than clicking
+  CHECK(biggestStep < 0.35f * peak);
+  CHECK(last < (size_t)(Chime::lengthSeconds * rate));
+  CHECK(std::abs(a[last]) < 1.0e-4f); // and out
+
+  // Asked again, it plays again.
+  chime.trigger();
+  std::vector<float> c((size_t)rate / 4, 0.0f), d(c.size(), 0.0f);
+  render(c, d);
+  CHECK(*std::max_element(c.begin(), c.end()) > 0.5f * peak);
 }
 
 namespace {

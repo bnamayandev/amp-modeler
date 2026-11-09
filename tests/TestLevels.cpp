@@ -13,7 +13,9 @@ constexpr int block = 128;
 constexpr const char *builtin = "builtin:BlackstarHT1";
 
 /** Captures to match, in a scratch directory: the built-in one turned 20 dB down,
-    which is the same amp captured quieter, and a different amp altogether. */
+    which is the same amp captured quieter, the same 40 dB down, which is far enough
+    under where matching puts captures that it's turned up, and a different amp
+    altogether. */
 struct Captures {
   Captures() {
     dir.createDirectory();
@@ -25,6 +27,8 @@ struct Captures {
     REQUIRE(headScale > 0);
     quiet = dir.getChildFile("quiet.nam");
     quiet.replaceWithText(text.replaceSection(headScale, 5, "0.002]"));
+    faint = dir.getChildFile("faint.nam");
+    faint.replaceWithText(text.replaceSection(headScale, 5, "0.0002]"));
     other = juce::File(NAM_EXAMPLE_MODELS_DIR).getChildFile("wavenet_a1_standard.nam");
     REQUIRE(other.existsAsFile());
 
@@ -39,7 +43,7 @@ struct Captures {
   ~Captures() { dir.deleteRecursively(); }
 
   juce::File dir = juce::File::createTempFile("evil-levels");
-  juce::File quiet, other, bright;
+  juce::File quiet, faint, other, bright;
 };
 
 /** Runs silence, giving JUCE's thread time to build any new IR and the chain
@@ -170,12 +174,13 @@ TEST_CASE("Captures measure their level as they load", "[levels]") {
   CHECK(quiet.loudnessDb == loud.loudnessDb);
 }
 
-TEST_CASE("The default rig is as loud with levels matched as without", "[levels]") {
+TEST_CASE("The default rig plays the headroom quieter with levels matched", "[levels]") {
   const Setup defaults{builtin, "builtin:EvilCab4x12"};
   const auto raw = levelOf(defaults, false);
   const auto matched = levelOf(defaults, true);
   INFO("raw " << raw << " dB, matched " << matched << " dB");
-  CHECK(matched == Catch::Approx(raw).margin(0.05));
+  CHECK(raw == Catch::Approx(loudness::builtinRigDb).margin(0.05));
+  CHECK(matched == Catch::Approx(raw - loudness::matchedHeadroomDb).margin(0.05));
   CHECK(matched == Catch::Approx(loudness::targetDb).margin(0.05));
 }
 
@@ -290,7 +295,7 @@ TEST_CASE("Turning matching on and off dips rather than jumping", "[levels]") {
     chain.prepare(48000.0, block);
     juce::String error;
     REQUIRE(chain.getCab().load("builtin:EvilCab4x12", error));
-    REQUIRE(chain.getModels().loadSynchronously(captures.quiet.getFullPathName(), error));
+    REQUIRE(chain.getModels().loadSynchronously(captures.faint.getFullPathName(), error));
     const auto s = plain(cabOn);
     settle(chain, s);
 
@@ -321,7 +326,8 @@ TEST_CASE("Turning matching on and off dips rather than jumping", "[levels]") {
     INFO((cabOn ? "cab on" : "cab off") << ": " << quietLevel << " dB, then "
                                         << matchedLevel << " dB matched; loudest "
                                         << loudest << " dB on the way");
-    CHECK(matchedLevel - quietLevel > 15.0); // it's a quiet capture: it came up
+    // Turned up, which is the way a jump would hurt.
+    CHECK(matchedLevel - quietLevel > 8.0);
     CHECK(steadyLevel(levels.size()) == Catch::Approx(quietLevel).margin(0.1));
     CHECK(loudest < std::max(quietLevel, matchedLevel) + 0.1); // never past it
     CHECK(quietest < quietLevel - 40.0);                       // by way of a dip

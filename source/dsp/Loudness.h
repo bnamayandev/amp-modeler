@@ -10,10 +10,18 @@ namespace evil::loudness {
     at this rate, whatever the host's. */
 inline constexpr double rate = 48000.0;
 
+/** How loud the built-in capture through the built-in cabinet is, as levelDb()
+    reads the reference guitar through it, with levels as they are. */
+inline constexpr double builtinRigDb = -2.84;
+
+/** How far under that every capture plays when levels are matched: at the built-in
+    rig's own level, matched captures were too loud to sit at, and this lets the
+    output knob sit at 0 dB. */
+inline constexpr double matchedHeadroomDb = 25.0;
+
 /** The level every capture plays at when levels are matched, as levelDb() reads
-    the reference guitar through it: the built-in capture through the built-in
-    cabinet, so the default sound is as loud with matching as without. */
-inline constexpr double targetDb = -2.84;
+    the reference guitar through it. */
+inline constexpr double targetDb = builtinRigDb - matchedHeadroomDb;
 
 /** Matching never turns anything up or down by more than this, so a capture that
     is all but silent, or broken, can't become a blast of noise. A quiet clean

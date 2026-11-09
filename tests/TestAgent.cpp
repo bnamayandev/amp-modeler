@@ -735,6 +735,11 @@ TEST_CASE("Failures read as something to act on, with no key in them", "[agent]"
 
     CHECK(provider->parseResponse(respond(404, "{}")).error.contains("model"));
     CHECK_FALSE(provider->parseResponse(respond(400, "{}")).retryable);
+    // Not worth sending again as it is, but maybe in a new conversation.
+    CHECK(provider->parseResponse(respond(400, "{}")).badRequest);
+    CHECK_FALSE(rejected.badRequest);
+    CHECK_FALSE(provider->parseResponse(respond(404, "{}")).badRequest);
+    CHECK_FALSE(provider->parseResponse(respond(429, "{}")).badRequest);
     CHECK(provider->parseResponse(respond(429, "{}")).retryable);
     CHECK(provider->parseResponse(respond(529, "not json")).retryable);
 
@@ -758,6 +763,7 @@ TEST_CASE("Google's bad-key error, as its server really sends it", "[agent]") {
   CHECK(reply.error.contains("rejected the API key"));
   CHECK(reply.error.contains("API key not valid"));
   CHECK_FALSE(reply.retryable);
+  CHECK_FALSE(reply.badRequest); // a new conversation won't fix the key
 
   const auto otherBadRequest = gemini->parseResponse(
       respond(400, R"([{"error":{"message":"model does not support tools"}}])"));
@@ -2397,6 +2403,28 @@ TEST_CASE("A record of what the agent did goes to the log", "[agent]") {
   CHECK_FALSE(lines.joinIntoString("\n").contains("sk-test"));
 }
 
+TEST_CASE("The player is told when the agent has answered, and only then", "[agent]") {
+  Chat chat;
+  std::atomic<int> answers{0};
+  chat.session->setOnAnswered([&] { ++answers; });
+
+  chat.http->reply(200, turnSetsFuzz);
+  chat.http->reply(200, turnDone);
+  chat.say("more fuzz");
+  CHECK(answers == 1);
+
+  chat.http->reply(200, turnSetsFuzz);
+  for (int i = 0; i <= Session::maxFreshStartsPerTurn; ++i) // turned down every time
+    chat.http->reply(400, R"({"error":{"message":"bad request"}})");
+  chat.say("failing");
+  CHECK(answers == 1);
+
+  // No key: nothing was asked, so nothing was answered.
+  chat.files.settings.setApiKey(ProviderId::anthropic, "");
+  chat.say("no key");
+  CHECK(answers == 1);
+}
+
 TEST_CASE("Web searches have a limit, since they cost the player money", "[agent]") {
   // One search a step, without end.
   const auto searchingTurn = [](int step) {
@@ -2444,7 +2472,8 @@ TEST_CASE("A failed turn starts the provider's thread over, with the chat as con
   chat.say("first");
 
   chat.http->reply(200, turnSetsFuzz);
-  chat.http->reply(400, R"({"error":{"message":"bad request"}})");
+  for (int i = 0; i <= Session::maxFreshStartsPerTurn; ++i) // turned down every time
+    chat.http->reply(400, R"({"error":{"message":"bad request"}})");
   const auto failed = chat.say("second");
   bool sawError = false, canRevert = false;
   for (const auto &entry : failed) {
@@ -2466,6 +2495,109 @@ TEST_CASE("A failed turn starts the provider's thread over, with the chat as con
   CHECK(text.contains("third"));
   // Only the one before it, not the message itself, in the recap.
   CHECK_FALSE(text.contains("Player: third"));
+}
+
+// A Gemini step that searches, says something, cites a page and turns the fuzz on.
+const char *const geminiSetsFuzz = R"({"id":"int_1","steps":[
+  {"type":"google_search_call","arguments":{"queries":["fuzz settings"]}},
+  {"type":"model_output","content":[{"type":"text","text":"Adding fuzz.",
+    "annotations":[{"type":"url_citation","url":"https://example.com/h","title":"H"}]}]},
+  {"type":"function_call","id":"f1","name":"set_parameters",
+    "arguments":{"changes":[{"id":"fuzz_on","value":1}]}}]})";
+// As the live API sent it, part-way through a turn.
+const char *const geminiInvalidArgument = R"([{"error":{"code":400,
+  "message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}])";
+
+TEST_CASE("A turned-down request carries on in a fresh conversation", "[agent]") {
+  Chat chat;
+  chat.files.settings.setProvider(ProviderId::gemini);
+  chat.files.settings.setApiKey(ProviderId::gemini, "g-key-123");
+  juce::StringArray lines;
+  std::mutex lock;
+  chat.session->setLogger([&](const juce::String &line) {
+    std::lock_guard guard(lock);
+    lines.add(line);
+  });
+  chat.http->reply(200, geminiSetsFuzz);
+  chat.http->reply(400, geminiInvalidArgument);
+  chat.http->reply(200, R"({"id":"int_2","steps":[{"type":"model_output","content":[{"type":"text","text":"Done."}]}]})");
+
+  const auto entries = chat.say("more fuzz please");
+  using Kind = Session::Entry::Kind;
+  CHECK(entries.back().kind == Kind::assistant);
+  CHECK(entries.back().text == "Done.");
+  CHECK(entries.back().before != nullptr); // still one turn, so one undo
+  bool toldThePlayer = false;
+  for (const auto &entry : entries) {
+    CHECK(entry.kind != Kind::error);
+    toldThePlayer = toldThePlayer || entry.text.contains("fresh conversation");
+  }
+  CHECK(toldThePlayer);
+  CHECK(chat.amp.get(params::fuzzOn) == 1.0f);
+
+  const auto sent = chat.http->getRequests();
+  REQUIRE(sent.size() == 3);
+  CHECK(bodyOf(sent[1])["previous_interaction_id"].toString() == "int_1");
+  // The fresh one leaves the turned-down conversation behind, and has the work.
+  const auto fresh = bodyOf(sent[2]);
+  CHECK(fresh["previous_interaction_id"].isVoid());
+  const auto input = fresh["input"].toString();
+  CHECK(input.contains("Carrying on"));
+  CHECK(input.contains("Request contains an invalid argument."));
+  CHECK(input.contains("more fuzz please"));
+  CHECK(input.contains("You searched the web for: fuzz settings"));
+  CHECK(input.contains("You told the player: Adding fuzz."));
+  CHECK(input.contains("You called set_parameters with"));
+  CHECK(input.contains("fuzz_on"));
+  CHECK(input.contains("It returned:"));
+  CHECK(input.contains("https://example.com/h"));
+  CHECK(input.contains("14 web searches left"));
+  CHECK(input.contains("[The amp right now."));
+  CHECK(fresh["system_instruction"].toString().isNotEmpty());
+
+  {
+    // What was turned down is in the log, to find out why.
+    std::lock_guard guard(lock);
+    const auto log = lines.joinIntoString("\n");
+    CHECK(log.contains("Agent request turned down: HTTP 400"));
+    CHECK(log.contains("INVALID_ARGUMENT"));
+    CHECK(log.contains("int_1"));
+    CHECK_FALSE(log.contains("g-key-123"));
+  }
+
+  // That turn finished, so the next message goes on in the new conversation.
+  chat.http->reply(200, R"({"id":"int_3","steps":[{"type":"model_output","content":[{"type":"text","text":"Sure."}]}]})");
+  chat.say("thanks");
+  const auto next = bodyOf(chat.http->getRequests().back());
+  CHECK(next["previous_interaction_id"].toString() == "int_2");
+  CHECK_FALSE(next["input"].toString().contains("Earlier in this chat"));
+}
+
+TEST_CASE("Fresh starts are limited, and the last one is shorter", "[agent]") {
+  Chat chat;
+  chat.files.settings.setProvider(ProviderId::gemini);
+  chat.files.settings.setApiKey(ProviderId::gemini, "g");
+  chat.http->reply(200, geminiSetsFuzz);
+  for (int i = 0; i <= Session::maxFreshStartsPerTurn; ++i)
+    chat.http->reply(400, geminiInvalidArgument);
+
+  const auto entries = chat.say("more fuzz please");
+  const auto sent = chat.http->getRequests();
+  REQUIRE(sent.size() == 2 + (size_t)Session::maxFreshStartsPerTurn);
+  const auto first = bodyOf(sent[2])["input"].toString();
+  const auto last = bodyOf(sent.back())["input"].toString();
+  CHECK(first.contains("It returned:"));
+  // In case it was the length: still what was done, without the results.
+  CHECK(last.contains("You called set_parameters with"));
+  CHECK_FALSE(last.contains("It returned:"));
+  CHECK(last.contains("left out, for length"));
+
+  int errors = 0;
+  for (const auto &entry : entries)
+    errors += entry.kind == Session::Entry::Kind::error ? 1 : 0;
+  CHECK(errors == 1); // said once, when it gave up
+  CHECK(entries.back().text.contains("didn't get all the way"));
+  CHECK(entries.back().before != nullptr); // the fuzz can still be undone
 }
 
 TEST_CASE("Switching provider or model starts a new thread", "[agent]") {

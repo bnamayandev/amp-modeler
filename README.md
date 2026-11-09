@@ -72,8 +72,8 @@ plugin where your DAW looks:
 - **Amp**: runs the loaded `.nam` model as it is, with nothing added to its tone. Captures
   differ in level by 30 dB or more, so with **normalise volume** (under **settings**, on unless
   you turn it off) each one plays at the same volume: it's measured as it loads, with a test
-  guitar strummed at an everyday strength, and set to sound through the cabinet as loud as the
-  built-in capture does. Off, every capture plays at the level it was made at.
+  guitar strummed at an everyday strength, and set to sound through the cabinet 15 dB quieter
+  than the built-in capture does with it off. Off, every capture plays at the level it was made at.
   - **Load .nam...** loads any NAM model (WaveNet, LSTM, A2, ... from ToneHunt/TONE3000, the
     official trainer, or `training/`). Loading happens off the audio thread and the switch
     crossfades over 40 ms. The panel shows the model's held-out ESR if its metadata has it.
@@ -215,7 +215,8 @@ plain file, not the OS keychain. They're never in presets, sessions or the log.
 
 **Limits.** There's one neural slot and it's the amp, so a capture of a pedal can't sit in front of
 it: the agent uses the closest built-in pedal and says so. Replies appear when finished rather than
-word by word. Google's terms want its Search Suggestions shown with grounded answers; they arrive as
+word by word, with a soft two-note chime in the output (about -24 dBFS) so you know without
+watching. It doesn't chime when a turn is stopped or fails. Google's terms want its Search Suggestions shown with grounded answers; they arrive as
 HTML and this build has no web view, so they're shown as ordinary links.
 
 **Without a window:** `evil-cli agent "Make it creamier"` runs the same agent on a headless copy of

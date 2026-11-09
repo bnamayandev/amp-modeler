@@ -34,6 +34,7 @@ EvilAmplifierProcessor::EvilAmplifierProcessor()
       agentSession(agentAmp, agentSettings.get(),
                    std::make_unique<agent::WebHttpClient>()) {
   agentSession.setLogger([this](const juce::String &line) { log(line); });
+  agentSession.setOnAnswered([this] { chime.trigger(); });
   if (wrapperType == wrapperType_Standalone)
     standalone::prepareAudioDevices(); // the audio device opens after this
   ModelManager::enableFastTanh(); // before any model is built
@@ -72,6 +73,7 @@ void EvilAmplifierProcessor::prepareToPlay(double sampleRate,
   const int maxBlock = juce::jmax(1, samplesPerBlock);
   chain.prepare(sampleRate, maxBlock);
   metronome.prepare(sampleRate);
+  chime.prepare(sampleRate);
 
   bypassDelay.setSize(2, bypassDelayCapacity);
   bypassDelay.clear();
@@ -133,6 +135,7 @@ void EvilAmplifierProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   chain.process(mono, n, snapshot.read());
   analyserTap.push(mono, n);
   metronome.process(mono, n, snapshot.readMetronome(metronomeRunning.load()));
+  chime.process(&mono, 1, n);
 
   // Never pass non-finite samples to the host (or to someone's ears).
   for (int i = 0; i < n; ++i)
@@ -182,6 +185,7 @@ void EvilAmplifierProcessor::processBlockBypassed(
         dst[i] = ring[(readStart + i) & (bypassDelayCapacity - 1)];
     }
   }
+  chime.process(buffer.getArrayOfWritePointers(), numOut, n);
 }
 
 juce::AudioProcessorEditor *EvilAmplifierProcessor::createEditor() {

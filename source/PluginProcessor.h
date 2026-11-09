@@ -2,6 +2,7 @@
 
 #include "agent/ProcessorAmp.h"
 #include "agent/Session.h"
+#include "dsp/Chime.h"
 #include "dsp/SampleTap.h"
 #include "dsp/SignalChain.h"
 #include "gui/Settings.h"
@@ -131,6 +132,7 @@ private:
   params::Snapshot snapshot;
   SignalChain chain;
   Metronome metronome;
+  Chime chime; // the agent has answered
   std::atomic<bool> metronomeRunning{false};
   PresetManager presets;
   CpuStats cpu;

@@ -38,6 +38,10 @@ struct ModelReply {
   int inputTokens = 0, outputTokens = 0;
   juce::String error; // set if this reply can't be used
   bool retryable = false;
+  /** The API turned the request itself down (a 400 or the like, not the key or
+      the model): sending it again won't help, but the same work in a new
+      conversation, shaped differently, may get past it. */
+  bool badRequest = false;
 };
 
 /** One provider's API and one conversation with it.

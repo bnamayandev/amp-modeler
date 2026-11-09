@@ -51,6 +51,18 @@ target_compile_definitions(nam_core PUBLIC
     NAM_ENABLE_A2_FAST)       # upstream default: fast path for "A2" WaveNet models
 set_target_properties(nam_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Make nlohmann's JSON_ASSERT throw (see JsonAssert.h). PUBLIC so every C++ file
+# that includes json.hpp gets the same definition (consumers also compile JUCE's
+# C sources, hence COMPILE_LANGUAGE). Force-included because MSVC's /D can't
+# define a function-like macro.
+set(EVIL_JSON_ASSERT_H "${CMAKE_CURRENT_LIST_DIR}/JsonAssert.h")
+if(MSVC)
+    target_compile_options(nam_core PUBLIC "$<$<COMPILE_LANGUAGE:CXX>:/FI${EVIL_JSON_ASSERT_H}>")
+else()
+    target_compile_options(nam_core PUBLIC
+        "$<$<COMPILE_LANGUAGE:CXX>:SHELL:-include \"${EVIL_JSON_ASSERT_H}\">")
+endif()
+
 if(MSVC)
     # PRIVATE: only NAM's own sources need these; JUCE sets up <windows.h> itself.
     target_compile_definitions(nam_core PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES)

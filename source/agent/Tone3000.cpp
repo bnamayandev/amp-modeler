@@ -1,6 +1,7 @@
 #include "Tone3000.h"
 
 #include "Json.h"
+#include "state/PresetManager.h"
 
 #include <juce_cryptography/juce_cryptography.h>
 
@@ -12,7 +13,7 @@ namespace evil::agent {
 namespace {
 constexpr const char *origin = "https://www.tone3000.com";
 constexpr juce::int64 maxFileBytes = 64 * 1024 * 1024;
-constexpr const char *creditFileName = "attribution.json";
+constexpr const char *creditFileName = PresetManager::attributionFileName;
 
 juce::File libraryOverride;
 
@@ -387,30 +388,52 @@ juce::var Tone3000::getTone(juce::int64 toneId, juce::String &error) {
   return getJson("/api/v1/tones/" + juce::String(toneId), error);
 }
 
-juce::var Tone3000::listModels(juce::int64 toneId, const juce::String &format,
-                               juce::String &error) {
-  const auto path =
-      "/api/v1/models?tone_id=" + juce::String(toneId) + "&page_size=100";
-  if (format == "ir")
-    return getJson(path, error)["data"];
-
-  // Without an architecture the API leaves out A2; with one it has only A2.
-  auto models = json::array();
-  juce::Array<juce::int64> seen;
-  for (const juce::String architecture : {"&architecture=2", ""})
-    for (const auto &model :
-         json::items(getJson(path + architecture, error)["data"]))
+void Tone3000::collectModels(const juce::String &path, FileList &list,
+                             juce::Array<juce::int64> &seen, juce::String &error) {
+  // At the most the API sends a page, this is 3000 files, and most packs take one
+  // request. It's a limit on a server that never stops, not on any real pack.
+  constexpr int maxPages = 10;
+  for (int page = 1; page <= maxPages; ++page) {
+    juce::String failed;
+    const auto reply =
+        getJson(path + (page > 1 ? "&page=" + juce::String(page) : juce::String()), failed);
+    if (failed.isNotEmpty()) {
+      error = failed;
+      list.complete = false;
+      return;
+    }
+    for (const auto &model : json::items(reply["data"]))
       if (const auto id = (juce::int64)model["id"]; !seen.contains(id)) {
         seen.add(id);
-        models.append(model);
+        list.files.add(model);
       }
-  if (!models.getArray()->isEmpty())
+    if (page >= (int)reply["total_pages"]) // including a reply that doesn't say
+      return;
+  }
+  list.complete = false;
+}
+
+Tone3000::FileList Tone3000::listModels(juce::int64 toneId, const juce::String &format,
+                                        juce::String &error) {
+  const auto path =
+      "/api/v1/models?tone_id=" + juce::String(toneId) + "&page_size=300";
+  FileList list;
+  juce::Array<juce::int64> seen;
+  if (format == "ir") {
+    collectModels(path, list, seen, error);
+    return list;
+  }
+
+  // Without an architecture the API leaves out A2; with one it has only A2.
+  for (const juce::String architecture : {"&architecture=2", ""})
+    collectModels(path + architecture, list, seen, error);
+  if (!list.files.isEmpty())
     error = {};
-  return models;
+  return list;
 }
 
 juce::var Tone3000::listTones(const juce::String &list, const juce::String &gear,
-                              const juce::String &query, juce::String &error) {
+                              const juce::String &query, juce::String &error, int *total) {
   auto path = "/api/v1/tones/" + list;
   juce::StringArray parameters;
   if (gear.isNotEmpty())
@@ -423,7 +446,10 @@ juce::var Tone3000::listTones(const juce::String &list, const juce::String &gear
   }
   if (!parameters.isEmpty())
     path << "?" << parameters.joinIntoString("&");
-  return getJson(path, error)["data"];
+  const auto reply = getJson(path, error);
+  if (total != nullptr)
+    *total = (int)reply["total"];
+  return reply["data"];
 }
 
 juce::File Tone3000::download(const juce::var &tone, const juce::var &model,
@@ -439,11 +465,19 @@ juce::File Tone3000::download(const juce::var &tone, const juce::var &model,
   // Names come from the IDs and a cleaned-up title, never a server's path.
   const auto dir =
       getLibraryDirectory().getChildFile(juce::String(toneId));
+  const auto remember = [&] {
+    dir.getChildFile(creditFileName)
+        .replaceWithText(json::dump(json::object({{"credit", credit(tone)},
+                                                  {"url", pageUrl(tone)},
+                                                  {"gear", tone["gear"]}})));
+  };
   const auto stem = juce::String(modelId) + "-";
   for (const auto &existing :
        dir.findChildFiles(juce::File::findFiles, false, stem + "*"))
-    if (existing.getSize() > 0)
+    if (existing.getSize() > 0) {
+      remember(); // files from before the gear was kept pick it up here
       return existing;
+    }
 
   HttpRequest request;
   request.url = url;
@@ -471,9 +505,7 @@ juce::File Tone3000::download(const juce::var &tone, const juce::var &model,
     error = "couldn't save " + file.getFullPathName();
     return {};
   }
-  dir.getChildFile(creditFileName)
-      .replaceWithText(json::dump(json::object({{"credit", credit(tone)},
-                                                {"url", pageUrl(tone)}})));
+  remember();
   return file;
 }
 
@@ -515,16 +547,25 @@ void Tone3000::setLibraryDirectoryForTesting(const juce::File &dir) {
   libraryOverride = dir;
 }
 
-juce::String Tone3000::creditForSource(const juce::String &source) {
+/** What was kept about a file: beside it in the library, or beside where a preset
+    that carried it put it back. */
+static juce::var attributionFor(const juce::String &source) {
   if (!juce::File::isAbsolutePath(source))
     return {};
   const juce::File file(source);
-  if (!file.isAChildOf(getLibraryDirectory()))
+  if (!file.isAChildOf(Tone3000::getLibraryDirectory()) &&
+      !file.isAChildOf(PresetManager::getSavedFilesDirectory()))
     return {};
-  const auto saved =
-      juce::JSON::parse(file.getSiblingFile(creditFileName).loadFileAsString());
-  const auto line = saved["credit"].toString();
+  return juce::JSON::parse(file.getSiblingFile(creditFileName).loadFileAsString());
+}
+
+juce::String Tone3000::creditForSource(const juce::String &source) {
+  const auto line = attributionFor(source)["credit"].toString();
   return line.isNotEmpty() ? "TONE3000: " + line : juce::String();
+}
+
+juce::String Tone3000::gearForSource(const juce::String &source) {
+  return attributionFor(source)["gear"].toString();
 }
 
 Tone3000::Pkce Tone3000::makePkce() {

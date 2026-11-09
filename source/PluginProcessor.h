@@ -2,8 +2,10 @@
 
 #include "agent/ProcessorAmp.h"
 #include "agent/Session.h"
+#include "dsp/Chime.h"
 #include "dsp/SampleTap.h"
 #include "dsp/SignalChain.h"
+#include "gui/Settings.h"
 #include "state/Parameters.h"
 #include "state/PresetManager.h"
 
@@ -130,6 +132,7 @@ private:
   params::Snapshot snapshot;
   SignalChain chain;
   Metronome metronome;
+  Chime chime; // the agent has answered
   std::atomic<bool> metronomeRunning{false};
   PresetManager presets;
   CpuStats cpu;
@@ -147,6 +150,8 @@ private:
   std::atomic<int> reportedLatency{0};
 
   juce::SharedResourcePointer<SharedLogFile> logFile;
+  // The player's preferences, for whether to normalise the volume.
+  juce::SharedResourcePointer<gui::Settings> appSettings;
   juce::CriticalSection irErrorLock;
   juce::String lastIrError;
   juce::String lastLoggedModelSource;

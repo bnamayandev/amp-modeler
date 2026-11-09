@@ -138,6 +138,7 @@ ModelManager::LoadResult ModelManager::buildRunner(const juce::String &source) {
     info.gear = (jsonString(data.metadata, "gear_make") + " " +
                  jsonString(data.metadata, "gear_model"))
                     .trim();
+    info.gearType = jsonString(data.metadata, "gear_type");
     if (data.metadata.is_object())
       if (const auto it = data.metadata.find("training");
           it != data.metadata.end()) {
@@ -147,6 +148,7 @@ ModelManager::LoadResult ModelManager::buildRunner(const juce::String &source) {
 
     result.runner =
         std::make_unique<NamModelRunner>(std::move(dsp), std::move(info));
+    result.runner->measureLevel();
   } catch (const std::exception &e) {
     result.error = "Invalid model: " + juce::String(e.what());
   }
@@ -191,6 +193,9 @@ void ModelManager::post(std::unique_ptr<NamModelRunner> runner,
     runner->prepare(
         specRate,
         specBlockSize); // allocates and prewarms, off the audio thread
+  // First, so the IR's new level is on its way as the model fades in.
+  if (onModelChanging != nullptr)
+    onModelChanging(runner->getReferenceOutput());
   if (auto *old = pending.exchange(runner.release(), std::memory_order_acq_rel);
       old != nullptr && old != unloadToken())
     delete old; // the audio thread never saw it
@@ -211,6 +216,11 @@ void ModelManager::prepare(double sampleRate, int maxBlockSize) {
   inputCopy.assign((size_t)maxBlockSize, 0.0f);
   fadeBuffer.assign((size_t)maxBlockSize, 0.0f);
   fadeLength = std::max(1, (int)(0.04 * sampleRate));
+  // Long enough for JUCE to build an IR and finish its 50 ms crossfade.
+  holdLength = std::max(1, (int)(0.15 * sampleRate));
+  matchingApplied = matching.load();
+  switching = Switching::no;
+  switchGain = 1.0f;
 
   // Audio is stopped while preparing, so finishing a crossfade here is safe.
   if (fading) {
@@ -249,6 +259,8 @@ void ModelManager::requestUnload() {
   }
   {
     std::lock_guard lock(specMutex);
+    if (onModelChanging != nullptr)
+      onModelChanging(nullptr);
     if (auto *old = pending.exchange(unloadToken(), std::memory_order_acq_rel);
         old != nullptr && old != unloadToken())
       delete old;
@@ -341,6 +353,44 @@ void ModelManager::render(NamModelRunner *runner, const float *in, float *out,
     return;
   }
   runner->process(in, out, n);
+  if (matchingApplied && !juce::exactlyEqual(runner->getMatchGain(), 1.0f))
+    juce::FloatVectorOperations::multiply(out, runner->getMatchGain(), n);
+}
+
+void ModelManager::switchMatching(float *out, int n) noexcept {
+  const bool wanted = matching.load(std::memory_order_relaxed);
+  if (switching == Switching::no && wanted != matchingApplied)
+    switching = Switching::fadingOut;
+  if (switching == Switching::no)
+    return;
+
+  // Fading out and back in each take as long as a model swap.
+  const float step = 1.0f / (float)fadeLength;
+  for (int i = 0; i < n; ++i) {
+    switch (switching) {
+    case Switching::fadingOut:
+      switchGain -= step;
+      if (switchGain <= 0.0f) {
+        switchGain = 0.0f;
+        matchingApplied = wanted; // silent for the rest of this block
+        switching = Switching::holding;
+        holdLeft = holdLength;
+      }
+      break;
+    case Switching::holding:
+      if (--holdLeft <= 0)
+        switching = Switching::fadingIn;
+      break;
+    case Switching::fadingIn:
+      switchGain = std::min(1.0f, switchGain + step);
+      break;
+    case Switching::no:
+      break;
+    }
+    out[i] *= switchGain;
+  }
+  if (switching == Switching::fadingIn && switchGain >= 1.0f)
+    switching = Switching::no;
 }
 
 void ModelManager::process(const float *in, float *out, int n) noexcept {
@@ -354,19 +404,20 @@ void ModelManager::process(const float *in, float *out, int n) noexcept {
 
   render(active, inputCopy.data(), out, n);
 
-  if (!fading)
-    return;
+  if (fading) {
+    render(fadingOut, inputCopy.data(), fadeBuffer.data(), n);
+    for (int i = 0; i < n; ++i) {
+      const float t =
+          std::min(1.0f, (float)(fadePosition + i + 1) / (float)fadeLength);
+      out[i] = fadeBuffer[(size_t)i] + t * (out[i] - fadeBuffer[(size_t)i]);
+    }
+    fadePosition += n;
+    if (fadePosition >= fadeLength && retire(fadingOut)) {
+      fadingOut = nullptr;
+      fading = false;
+    }
+  }
 
-  render(fadingOut, inputCopy.data(), fadeBuffer.data(), n);
-  for (int i = 0; i < n; ++i) {
-    const float t =
-        std::min(1.0f, (float)(fadePosition + i + 1) / (float)fadeLength);
-    out[i] = fadeBuffer[(size_t)i] + t * (out[i] - fadeBuffer[(size_t)i]);
-  }
-  fadePosition += n;
-  if (fadePosition >= fadeLength && retire(fadingOut)) {
-    fadingOut = nullptr;
-    fading = false;
-  }
+  switchMatching(out, n);
 }
 } // namespace evil

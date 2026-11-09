@@ -19,15 +19,20 @@ public:
       the open editors to repaint. */
   void setAccentHue(float hue);
 
+  /** Whether every capture and IR plays at the same volume, as measured when it
+      loads, rather than at the level it was made at. On unless turned off. */
+  bool isNormalisingVolume() const;
+  void setNormalisingVolume(bool);
+
   static juce::File getFile();
 
 private:
   juce::PropertiesFile file;
 };
 
-/** The settings popover: accent swatches, and a hue strip for anything in
-    between. In the standalone app, also the audio device and saved states,
-    which a host otherwise looks after. */
+/** The settings popover: whether to normalise the volume, accent swatches,
+    and a hue strip for anything in between. In the standalone app, also the
+    audio device and saved states, which a host otherwise looks after. */
 class SettingsPanel final : public juce::Component,
                             private juce::ChangeListener {
 public:
@@ -39,7 +44,7 @@ public:
   explicit SettingsPanel(std::optional<AppActions> = std::nullopt);
   ~SettingsPanel() override;
 
-  static constexpr int panelWidth = 300, panelHeight = 118,
+  static constexpr int panelWidth = 300, panelHeight = 188,
                        appSectionHeight = 138;
   /** The swatch hues, in degrees; the first is the default. */
   static constexpr std::array<float, 9> swatchHues{10.0f,  350.0f, 40.0f,
@@ -53,7 +58,7 @@ public:
   void mouseMove(const juce::MouseEvent &) override;
 
 private:
-  void changeListenerCallback(juce::ChangeBroadcaster *) override { repaint(); }
+  void changeListenerCallback(juce::ChangeBroadcaster *) override;
   juce::Rectangle<float> swatch(size_t index) const;
   void addAction(juce::TextButton &, const juce::String &tooltip,
                  std::function<void()> action);
@@ -64,7 +69,9 @@ private:
   const bool hasAppSection;
   juce::TextButton audioButton{"audio/midi settings..."},
       saveButton{"save..."}, loadButton{"load..."}, resetButton{"reset"};
-  juce::Rectangle<int> audioCaption, stateCaption, caption, swatchRow, hueStrip;
+  juce::ToggleButton normaliseButton{"normalise volume"};
+  juce::Rectangle<int> audioCaption, stateCaption, levelsCaption, caption, swatchRow,
+      hueStrip;
   bool draggingHue = false;
 };
 } // namespace evil::gui

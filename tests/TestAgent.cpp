@@ -1,5 +1,6 @@
 #include "agent/HeadlessRig.h"
 #include "agent/Session.h"
+#include "dsp/Loudness.h"
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -118,9 +119,6 @@ public:
   }
   ToneReading measureTone() override {
     ++measures;
-    ToneReading reading;
-    reading.touchDb = 7.0f;
-    reading.distortionHardPercent = 12.0f;
     return reading;
   }
   float get(const char *id) const {
@@ -135,7 +133,7 @@ public:
     log.add("load " + source);
     if (loadError.isNotEmpty())
       return loadError;
-    model = {"new", source, nextLoudness};
+    model = {"new", source, nextLoudness, nextGearType};
     return {};
   }
   juce::String unloadModel() override {
@@ -164,12 +162,19 @@ public:
   std::vector<ParameterInfo> parameters;
   LoadedCapture model{"old", "builtin:old", -18.0};
   std::optional<double> nextLoudness = -12.0;
+  juce::String nextGearType; // what the next file's metadata says it is
   juce::String loadError, irLoaded;
   juce::StringArray log;
   int restores = 0, measures = 0;
+  ToneReading reading = [] {
+    ToneReading r;
+    r.touchDb = 7.0f;
+    r.distortionHardPercent = 12.0f;
+    return r;
+  }();
 };
 
-/** A settings file and a TONE3000 library that vanish after the test. */
+/** A settings file, a TONE3000 library and user presets that vanish after the test. */
 struct TestFiles {
   TestFiles() {
     dir = juce::File::createTempFile("evil-agent-test");
@@ -177,9 +182,11 @@ struct TestFiles {
     dir.createDirectory();
     settings.useFile(dir.getChildFile("agent.xml"));
     Tone3000::setLibraryDirectoryForTesting(dir.getChildFile("library"));
+    evil::PresetManager::setUserPresetDirectoryForTesting(dir.getChildFile("presets"));
   }
   ~TestFiles() {
     Tone3000::setLibraryDirectoryForTesting({});
+    evil::PresetManager::setUserPresetDirectoryForTesting({});
     dir.deleteRecursively();
   }
   juce::File dir;
@@ -197,12 +204,25 @@ const char *const toneJson = R"({
   "user": {"username": "plugnplay"}
 })";
 
+const char *const irToneJson = R"({
+  "id": 500, "title": "Some 4x12", "gear": "cab", "format": "ir",
+  "license": "cc-by", "url": "https://www.tone3000.com/tones/some-4x12-500",
+  "user": {"username": "someone"}
+})";
+
 /** TONE3000 as far as these tests need it, counting downloads. */
 struct FakeTone3000 {
   HttpResponse operator()(const HttpRequest &request) {
     const auto url = request.url;
     if (url.contains("/oauth/token"))
       return respond(200, R"({"access_token":"fresh","refresh_token":"r2","expires_in":3600})");
+    if (url.contains("/api/v1/tones/500"))
+      return respond(200, irToneJson);
+    if (url.contains("tone_id=500"))
+      return respond(200, R"({"data":[{"id":11,"name":"4x12","size":"standard",
+        "model_url":"https://www.tone3000.com/api/v1/models/11/download"}]})");
+    if (url.contains("/models/11/download"))
+      return respond(200, "RIFFxxxxWAVEfmt ");
     if (url.contains("/download") || url.contains("cdn")) {
       ++downloads;
       return respond(200, file);
@@ -715,6 +735,11 @@ TEST_CASE("Failures read as something to act on, with no key in them", "[agent]"
 
     CHECK(provider->parseResponse(respond(404, "{}")).error.contains("model"));
     CHECK_FALSE(provider->parseResponse(respond(400, "{}")).retryable);
+    // Not worth sending again as it is, but maybe in a new conversation.
+    CHECK(provider->parseResponse(respond(400, "{}")).badRequest);
+    CHECK_FALSE(rejected.badRequest);
+    CHECK_FALSE(provider->parseResponse(respond(404, "{}")).badRequest);
+    CHECK_FALSE(provider->parseResponse(respond(429, "{}")).badRequest);
     CHECK(provider->parseResponse(respond(429, "{}")).retryable);
     CHECK(provider->parseResponse(respond(529, "not json")).retryable);
 
@@ -738,6 +763,7 @@ TEST_CASE("Google's bad-key error, as its server really sends it", "[agent]") {
   CHECK(reply.error.contains("rejected the API key"));
   CHECK(reply.error.contains("API key not valid"));
   CHECK_FALSE(reply.retryable);
+  CHECK_FALSE(reply.badRequest); // a new conversation won't fix the key
 
   const auto otherBadRequest = gemini->parseResponse(
       respond(400, R"([{"error":{"message":"model does not support tools"}}])"));
@@ -992,6 +1018,308 @@ TEST_CASE("An IR tone loads as the cabinet and switches it on", "[agent]") {
       CHECK_FALSE(request.url.contains("architecture")); // IRs have none
 }
 
+TEST_CASE("The cabinet switch goes with the capture", "[agent]") {
+  TestFiles files;
+  signIn(files.settings);
+  FakeAmp amp;
+  FakeTone3000 server;
+  ScriptedHttp http;
+  http.route = [&server](const HttpRequest &r) { return server(r); };
+  Tone3000 tone3000(http, files.settings, [](const juce::URL &) {});
+  auto tools = makeTools(amp, tone3000);
+
+  const auto head = juce::String(toneJson).replace("amp-cab", "amp");
+  const auto loadCapture = [&tools] {
+    return tools.execute(call("load_tone3000_capture", R"({"tone":36640,"model_id":9})"));
+  };
+  const auto loadIrTone = [&tools] {
+    return tools.execute(call("load_tone3000_capture", R"({"tone":500,"model_id":11})"));
+  };
+  const auto replyOf = [](const ToolBox::Outcome &outcome) {
+    INFO(outcome.result.content);
+    REQUIRE_FALSE(outcome.result.isError);
+    return juce::JSON::parse(outcome.result.content);
+  };
+  REQUIRE(amp.get(params::cabOn) == 1.0f);
+
+  SECTION("clearing a tone doesn't give a capture with its own cabinet a second") {
+    replyOf(loadCapture());
+    REQUIRE(amp.get(params::cabOn) == 0.0f);
+    amp.setParameter(params::fuzzOn, 1.0f);
+
+    const auto result = replyOf(tools.execute(call("reset_controls", "{}")));
+    CHECK(amp.get(params::fuzzOn) == 0.0f);
+    CHECK(amp.get(params::cabOn) == 0.0f);
+    CHECK_FALSE((bool)result["cabinet_on"]);
+  }
+  SECTION("clearing a tone puts a head's cabinet back on") {
+    server.tone = head;
+    replyOf(loadCapture());
+    REQUIRE(amp.get(params::cabOn) == 1.0f);
+    amp.setParameter(params::cabOn, 0.0f);
+
+    const auto outcome = tools.execute(call("reset_controls", "{}"));
+    CHECK(outcome.changedAmp);
+    CHECK(amp.get(params::cabOn) == 1.0f);
+    CHECK((bool)replyOf(outcome)["cabinet_on"]);
+  }
+  SECTION("with no telling what a capture needs, it's left as the player has it") {
+    amp.model = {"mine", "/somewhere/mine.nam", {}, {}};
+    amp.setParameter(params::cabOn, 0.0f);
+    replyOf(tools.execute(call("reset_controls", "{}")));
+    CHECK(amp.get(params::cabOn) == 0.0f);
+    amp.setParameter(params::cabOn, 1.0f);
+    replyOf(tools.execute(call("reset_controls", "{}")));
+    CHECK(amp.get(params::cabOn) == 1.0f);
+  }
+  SECTION("an IR waits while a capture has its own cabinet, and plays with a head") {
+    replyOf(loadCapture());
+    const auto waiting = replyOf(loadIrTone());
+    CHECK(amp.irLoaded.endsWith(".wav"));
+    CHECK(amp.get(params::cabOn) == 0.0f);
+    CHECK_FALSE((bool)waiting["cabinet_on"]);
+    CHECK(waiting["why_the_cabinet_is_off"].toString().contains("its own cabinet"));
+
+    server.tone = head;
+    CHECK((bool)replyOf(loadCapture())["cabinet_on"]);
+    CHECK(amp.get(params::cabOn) == 1.0f);
+  }
+  SECTION("the built-ins follow the same rules") {
+    replyOf(loadCapture());
+    const auto ir = replyOf(tools.execute(call("load_builtin", R"({"kind":"ir","name":"EvilCab4x12"})")));
+    CHECK_FALSE((bool)ir["cabinet_on"]);
+    CHECK(amp.get(params::cabOn) == 0.0f);
+
+    // A built-in amp is a head: left with the switch off, it would have no cabinet.
+    const auto model = replyOf(tools.execute(call("load_builtin", R"({"kind":"model","name":"BlackstarHT1"})")));
+    CHECK((bool)model["cabinet_on"]);
+    CHECK(amp.get(params::cabOn) == 1.0f);
+
+    replyOf(loadCapture());
+    REQUIRE(amp.get(params::cabOn) == 0.0f);
+    replyOf(tools.execute(call("load_builtin", R"({"kind":"model","name":"none"})")));
+    CHECK(amp.get(params::cabOn) == 1.0f);
+
+    const auto second = replyOf(tools.execute(call("load_builtin", R"({"kind":"ir","name":"EvilCab4x12"})")));
+    CHECK((bool)second["cabinet_on"]);
+  }
+  SECTION("a capture's file says what it is, over the page it's on") {
+    amp.nextGearType = "amp_cab";
+    server.tone = head;
+    CHECK_FALSE((bool)replyOf(loadCapture())["cabinet_on"]);
+    CHECK(amp.get(params::cabOn) == 0.0f);
+
+    amp.nextGearType = "amp";
+    server.tone = toneJson;
+    CHECK((bool)replyOf(loadCapture())["cabinet_on"]);
+    CHECK(amp.get(params::cabOn) == 1.0f);
+  }
+  SECTION("it's still known once the amp has been closed and opened") {
+    replyOf(loadCapture());
+    auto reopened = makeTools(amp, tone3000);
+    replyOf(reopened.execute(call("reset_controls", "{}")));
+    CHECK(amp.get(params::cabOn) == 0.0f);
+    CHECK(describeAmpState(amp).contains("(has its own cabinet)"));
+  }
+  SECTION("a file from before the gear was kept picks it up when it's next loaded") {
+    replyOf(loadCapture());
+    const auto attribution = Tone3000::getLibraryDirectory()
+                                 .getChildFile("36640")
+                                 .getChildFile(evil::PresetManager::attributionFileName);
+    REQUIRE(attribution.replaceWithText(R"({"credit":"An old one","url":"https://www.tone3000.com/tones/1"})"));
+    CHECK(Tone3000::gearForSource(amp.getModel().source).isEmpty());
+    replyOf(loadCapture());
+    CHECK(Tone3000::gearForSource(amp.getModel().source) == "amp-cab");
+  }
+  SECTION("the switch can still be thrown by hand, with a warning") {
+    replyOf(loadCapture());
+    const auto two = replyOf(tools.execute(call("set_parameters", R"({"changes":[{"id":"cab_on","value":1}]})")));
+    CHECK(amp.get(params::cabOn) == 1.0f);
+    CHECK(two["applied"][0]["warning"].toString().contains("two cabinets"));
+    const auto back = replyOf(tools.execute(call("set_parameters", R"({"changes":[{"id":"cab_on","value":0}]})")));
+    CHECK_FALSE(back["applied"][0].hasProperty("warning"));
+
+    server.tone = head;
+    replyOf(loadCapture());
+    const auto none = replyOf(tools.execute(call("set_parameters", R"({"changes":[{"id":"cab_on","value":0}]})")));
+    CHECK(none["applied"][0]["warning"].toString().contains("no cabinet"));
+  }
+  CHECK_FALSE(describeAmpState(amp).contains("Model: old (has"));
+}
+
+namespace {
+/** A tone with more files than come back in a page, as the real API pages them. */
+struct LongPack {
+  HttpResponse operator()(const HttpRequest &request) {
+    const auto url = request.url;
+    if (url.contains("/download"))
+      return respond(200, "{\"version\":\"0.5.4\"}");
+    if (url.contains("/api/v1/tones/36640"))
+      return respond(200, toneJson);
+    if (!url.contains("/api/v1/models"))
+      return respond(404, "{}");
+    if (url.contains("architecture=2"))
+      return respond(200, R"({"data":[],"page":1,"page_size":300,"total":0,"total_pages":1})");
+
+    const int page = juce::jmax(1, url.fromFirstOccurrenceOf("&page=", false, false).getIntValue());
+    if (page == failOnPage)
+      return respond(500, "{}");
+    juce::StringArray items;
+    for (int i = (page - 1) * pageSize; i < juce::jmin(page * pageSize, total); ++i) {
+      const auto id = juce::String(1000 + i);
+      items.add("{\"id\":" + id + ",\"name\":\"V" + juce::String(i) +
+                (i % 2 == 1 ? " Bright" : " Normal") +
+                "\",\"size\":\"standard\",\"architecture_version\":\"1\"," +
+                "\"model_url\":\"https://www.tone3000.com/api/v1/models/" + id + "/download\"}");
+    }
+    const int pages = neverEnds ? 100000 : (total + pageSize - 1) / pageSize;
+    return respond(200, "{\"data\":[" + items.joinIntoString(",") + "],\"page\":" +
+                            juce::String(page) + ",\"page_size\":300,\"total\":" +
+                            juce::String(total) + ",\"total_pages\":" + juce::String(pages) + "}");
+  }
+  static constexpr int pageSize = 300;
+  int total = 650, failOnPage = 0;
+  bool neverEnds = false;
+};
+} // namespace
+
+TEST_CASE("No file in a long pack is out of reach, or hidden", "[agent]") {
+  TestFiles files;
+  signIn(files.settings);
+  FakeAmp amp;
+  LongPack server;
+  ScriptedHttp http;
+  http.route = [&server](const HttpRequest &r) { return server(r); };
+  Tone3000 tone3000(http, files.settings, [](const juce::URL &) {});
+  auto tools = makeTools(amp, tone3000);
+
+  const auto inspect = [&tools](const juce::String &extra) {
+    const auto outcome = tools.execute(call("inspect_tone3000_tone", "{\"tone\":36640" + extra + "}"));
+    INFO(outcome.result.content);
+    REQUIRE_FALSE(outcome.result.isError);
+    return juce::JSON::parse(outcome.result.content);
+  };
+
+  SECTION("the first page says how many there are, and how to get at them") {
+    const auto result = inspect("");
+    CHECK(result["files"].size() == 40);
+    CHECK((int)result["files"][0]["id"] == 1000);
+    CHECK((int)result["files_total"] == 650);
+    CHECK(result["more_files"].toString().contains("40 of 650"));
+    CHECK_FALSE(result.hasProperty("list_incomplete"));
+    for (const auto &request : http.getRequests())
+      if (request.url.contains("/api/v1/models"))
+        CHECK(request.url.contains("page_size=300")); // the most the API sends
+  }
+  SECTION("skip goes on to the rest, right to the end") {
+    const auto next = inspect(",\"skip\":40");
+    CHECK((int)next["files"][0]["id"] == 1040);
+    CHECK(next.hasProperty("more_files"));
+
+    const auto last = inspect(",\"skip\":640");
+    CHECK(last["files"].size() == 10);
+    CHECK((int)last["files"][9]["id"] == 1649);
+    CHECK_FALSE(last.hasProperty("more_files"));
+  }
+  SECTION("name_contains finds one on a later page, by all its words, in any case") {
+    const auto result = inspect(",\"name_contains\":\"bright v649\"");
+    REQUIRE(result["files"].size() == 1);
+    CHECK((int)result["files"][0]["id"] == 1649);
+    CHECK((int)result["files_matching"] == 1);
+    CHECK((int)result["files_total"] == 650);
+    CHECK_FALSE(result.hasProperty("more_files"));
+
+    const auto many = inspect(",\"name_contains\":\"Bright\"");
+    CHECK(many["files"].size() == 40);
+    CHECK((int)many["files_matching"] == 325);
+    CHECK(many["more_files"].toString().contains("40 of 325"));
+
+    CHECK(inspect(",\"name_contains\":\"nothing like it\"")["files"].size() == 0);
+  }
+  SECTION("a file on a later page can be loaded") {
+    const auto outcome = tools.execute(call("load_tone3000_capture", R"({"tone":36640,"model_id":1649})"));
+    INFO(outcome.result.content);
+    CHECK_FALSE(outcome.result.isError);
+  }
+  SECTION("a list that breaks off part-way says so") {
+    server.failOnPage = 2;
+    const auto result = inspect("");
+    CHECK((int)result["files_total"] == 300);
+    CHECK(result["files"].size() == 40);
+    CHECK(result.hasProperty("list_incomplete"));
+
+    // A file in the part that never came isn't said not to exist.
+    const auto missing = tools.execute(call("load_tone3000_capture", R"({"tone":36640,"model_id":1649})"));
+    CHECK(missing.result.isError);
+    CHECK(missing.result.content.contains("whole list"));
+  }
+  SECTION("a server that never stops is stopped, and that's said too") {
+    server.neverEnds = true;
+    const auto result = inspect("");
+    CHECK((int)result["files_total"] == 650);
+    CHECK(result.hasProperty("list_incomplete"));
+    int requests = 0;
+    for (const auto &request : http.getRequests())
+      if (request.url.contains("/api/v1/models") && !request.url.contains("architecture=2"))
+        ++requests;
+    CHECK(requests == 10);
+  }
+}
+
+TEST_CASE("A short pack takes one request, and a server that doesn't page still works", "[agent]") {
+  TestFiles files;
+  signIn(files.settings);
+  FakeAmp amp;
+  FakeTone3000 server; // sends no page counts at all
+  ScriptedHttp http;
+  http.route = [&server](const HttpRequest &r) { return server(r); };
+  Tone3000 tone3000(http, files.settings, [](const juce::URL &) {});
+  auto tools = makeTools(amp, tone3000);
+
+  const auto result = juce::JSON::parse(
+      tools.execute(call("inspect_tone3000_tone", R"({"tone":36640})")).result.content);
+  CHECK((int)result["files_total"] == 2);
+  CHECK_FALSE(result.hasProperty("more_files"));
+  CHECK_FALSE(result.hasProperty("list_incomplete"));
+  CHECK_FALSE(result.hasProperty("files_matching"));
+  int requests = 0;
+  for (const auto &request : http.getRequests())
+    if (request.url.contains("/api/v1/models")) {
+      ++requests;
+      CHECK_FALSE(request.url.contains("&page="));
+    }
+  CHECK(requests == 2); // one for each NAM generation
+}
+
+TEST_CASE("A player's long list says there's more", "[agent]") {
+  TestFiles files;
+  signIn(files.settings);
+  FakeAmp amp;
+  ScriptedHttp http;
+  http.route = [](const HttpRequest &r) {
+    if (r.url.contains("/tones/favorited"))
+      return respond(200, R"({"data":[{"id":1,"title":"A","gear":"amp","format":"nam"}],
+                              "page":1,"page_size":25,"total":60,"total_pages":3})");
+    if (r.url.contains("/tones/created"))
+      return respond(200, R"({"data":[{"id":3,"title":"C","gear":"amp","format":"nam"}],
+                              "page":1,"page_size":25,"total":1,"total_pages":1})");
+    return respond(200, R"({"data":[{"id":2,"title":"B","gear":"amp","format":"nam"}]})");
+  };
+  Tone3000 tone3000(http, files.settings, [](const juce::URL &) {});
+  auto tools = makeTools(amp, tone3000);
+  const auto list = [&tools](const char *which) {
+    return juce::JSON::parse(
+        tools.execute(call("list_tone3000_tones", "{\"list\":\"" + juce::String(which) + "\"}"))
+            .result.content);
+  };
+
+  const auto favorites = list("favorited");
+  CHECK(favorites["tones"].size() == 1);
+  CHECK(favorites["more_tones"].toString().contains("1 of 60"));
+  CHECK_FALSE(list("created").hasProperty("more_tones"));
+  CHECK_FALSE(list("trending").hasProperty("more_tones")); // a fixed feed: says no total
+}
+
 TEST_CASE("inspect shows both NAM generations, and stays on the free tier", "[agent]") {
   TestFiles files;
   signIn(files.settings);
@@ -1217,6 +1545,209 @@ TEST_CASE("measure_tone hands the model the reading", "[agent]") {
   CHECK((double)result["touch_db"] == Catch::Approx(7.0));
   CHECK((double)result["distortion_percent_picked_hard"] == Catch::Approx(12.0));
   CHECK(result["spectrum_change_from_capture_alone_db"].hasProperty("1.6k"));
+  CHECK((double)result["output_db"] == Catch::Approx(0.0));
+}
+
+TEST_CASE("measure_tone says when a band has nothing in it to read", "[agent]") {
+  TestFiles files;
+  FakeAmp amp;
+  ScriptedHttp http;
+  Tone3000 tone3000(http, files.settings, [](const juce::URL &) {});
+  auto tools = makeTools(amp, tone3000);
+
+  // Nothing in the capture at 12.8k, and a pedal has put some there.
+  amp.reading.bandDbCaptureAlone[8] = -100.0f;
+  amp.reading.bandDb[8] = -40.0f;
+  // Next to nothing either way at 50 Hz.
+  amp.reading.bandDbCaptureAlone[0] = -90.0f;
+  amp.reading.bandDb[0] = -85.0f;
+  // Enough in the capture at 6.4k, and a pedal has taken it all away: that's real.
+  amp.reading.bandDbCaptureAlone[7] = -35.0f;
+  amp.reading.bandDb[7] = -95.0f;
+
+  const auto result = juce::JSON::parse(tools.execute(call("measure_tone", "{}")).result.content);
+  const auto shape = result["spectrum_db_by_eq_band"];
+  const auto change = result["spectrum_change_from_capture_alone_db"];
+  CHECK(change["12.8k"].isVoid());
+  CHECK((double)shape["12.8k"] == Catch::Approx(-40.0));
+  CHECK(change["50"].isVoid());
+  CHECK(shape["50"].isVoid());
+  CHECK((double)change["6.4k"] == Catch::Approx(-60.0));
+  CHECK(shape["6.4k"].isVoid());
+  CHECK((double)change["800"] == Catch::Approx(0.0));
+
+  // And the same through the reading itself.
+  CHECK_FALSE(amp.reading.bandChangeDb(8).has_value());
+  CHECK(*amp.reading.bandChangeDb(7) == Catch::Approx(-60.0f));
+}
+
+TEST_CASE("Input and output don't read as changes to the tone", "[agent]") {
+  TestFiles files;
+  HeadlessRig rig;
+  auto &amp = rig.amp;
+  REQUIRE(amp.loadModel("builtin:BlackstarHT1").isEmpty());
+  const auto plain = amp.measureTone();
+  REQUIRE(plain.error.isEmpty());
+
+  const auto checkNoChange = [](const ToneReading &reading) {
+    REQUIRE(reading.error.isEmpty());
+    CHECK(std::abs(reading.levelDb - reading.levelDbCaptureAlone) < 0.01f);
+    CHECK(std::abs(reading.touchDb - reading.touchDbCaptureAlone) < 0.01f);
+    for (size_t b = 0; b < reading.bandDb.size(); ++b) {
+      REQUIRE(reading.bandChangeDb(b).has_value());
+      CHECK(std::abs(*reading.bandChangeDb(b)) < 0.01f);
+    }
+  };
+
+  // What loading a louder capture leaves behind. It used to read as every band
+  // dropping 10 dB, and invite turning it back up.
+  REQUIRE(amp.setParameter(params::output, -10.0f));
+  const auto trimmed = amp.measureTone();
+  checkNoChange(trimmed);
+  CHECK(trimmed.levelDb == Catch::Approx(plain.levelDb - 10.0f).margin(0.05f));
+  for (size_t b = 0; b < trimmed.bandDb.size(); ++b)
+    CHECK(trimmed.bandDb[b] == Catch::Approx(plain.bandDb[b]).margin(0.05f));
+
+  // A pedal's effect reads the same whatever the output, and however often it's
+  // measured, so correcting for its level doesn't move the goalposts.
+  REQUIRE(amp.setParameter(params::fuzzOn, 1.0f));
+  const auto quiet = amp.measureTone();
+  REQUIRE(amp.setParameter(params::output, 0.0f));
+  const auto loud = amp.measureTone();
+  CHECK(quiet.levelDb - quiet.levelDbCaptureAlone ==
+        Catch::Approx(loud.levelDb - loud.levelDbCaptureAlone).margin(0.05f));
+  for (size_t b = 0; b < quiet.bandDb.size(); ++b)
+    CHECK(*quiet.bandChangeDb(b) == Catch::Approx(*loud.bandChangeDb(b)).margin(0.05f));
+  REQUIRE(amp.setParameter(params::fuzzOn, 0.0f));
+
+  // Input cleans the capture up, which shows in the readings themselves, not as a
+  // scoop against how it was at another input.
+  REQUIRE(amp.setParameter(params::input, -24.0f));
+  const auto cleaned = amp.measureTone();
+  checkNoChange(cleaned);
+  CHECK(cleaned.touchDb > plain.touchDb + 3.0f);
+  CHECK(cleaned.distortionHardPercent < plain.distortionHardPercent);
+}
+
+TEST_CASE("Every band of the test guitar has something in it to read", "[agent]") {
+  TestFiles files;
+  HeadlessRig rig;
+  auto &amp = rig.amp; // no capture: a perfectly clean amp
+  REQUIRE(amp.setParameter(params::cabOn, 0.0f));
+
+  const auto clean = amp.measureTone();
+  REQUIRE(clean.error.isEmpty());
+  for (size_t b = 0; b < clean.bandDb.size(); ++b) {
+    INFO("band " << b);
+    CHECK(clean.bandChangeDb(b).has_value());
+  }
+
+  // A fader reads as a move in its own band, including the two at the ends that
+  // used to read 1.4 dB and 2.5 dB for this.
+  for (size_t b = 0; b < clean.bandDb.size(); ++b) {
+    REQUIRE(amp.setParameter(params::eqBands[b], 6.0f));
+    const auto moved = amp.measureTone();
+    REQUIRE(amp.setParameter(params::eqBands[b], 0.0f));
+    INFO("band " << b);
+    REQUIRE(moved.bandChangeDb(b).has_value());
+    CHECK(*moved.bandChangeDb(b) > 2.5f);
+    CHECK(*moved.bandChangeDb(b) < 6.5f);
+    if (b > 1)
+      CHECK(std::abs(*moved.bandChangeDb(b - 2)) < 1.0f);
+    if (b + 2 < clean.bandDb.size())
+      CHECK(std::abs(*moved.bandChangeDb(b + 2)) < 1.0f);
+  }
+
+  // A Tube Screamer's harmonics don't read as a rise from nothing, and its bass cut
+  // shows at the bottom. These read +22 dB and +64 dB before.
+  REQUIRE(amp.setParameter(params::odOn, 1.0f));
+  const auto pedal = amp.measureTone();
+  REQUIRE(pedal.bandChangeDb(0).has_value());
+  CHECK(*pedal.bandChangeDb(0) < 0.0f);
+  REQUIRE(pedal.bandChangeDb(8).has_value());
+  CHECK(*pedal.bandChangeDb(8) < 15.0f);
+
+  // Through a cabinet, a clean sound really has nothing at 12.8k, and says so
+  // instead of inventing a change.
+  REQUIRE(amp.setParameter(params::cabOn, 1.0f));
+  CHECK_FALSE(amp.measureTone().bandChangeDb(8).has_value());
+}
+
+// The prompt's figures for what each pedal and amp reads came from real captures,
+// which aren't in this repository, with the knobs where the agent's "noon" puts them.
+// Into clean amps (a '71 Twin, a Blues DeVille at 2) a Tube Screamer at noon has
+// touch 5.8 and a Muff or RAT at noon under 1; alone, a Plexi at gain 4 reads 1.8, a
+// DeVille at 4 reads 2.9 with 17% distortion, and a Plexi at gain 8 reads 0.4.
+//
+// These are the same pedals with no capture at all. They move if the pedals or the
+// test guitar do, and then the prompt's figures need measuring again with
+// `evil-cli measure`.
+TEST_CASE("What measure_tone reads is still what the prompt was written from", "[agent]") {
+  TestFiles files;
+  HeadlessRig rig;
+  auto &amp = rig.amp;
+
+  const auto knob = [&amp](const char *id, float position) {
+    REQUIRE(amp.setParameter(id, amp.valueAtPosition(id, position)));
+  };
+  struct Expected {
+    float touch, gentle, hard, level;
+  };
+  const auto check = [&amp](const char *what, const char *pedal, Expected expected) {
+    INFO(what);
+    REQUIRE(amp.setParameter(pedal, 1.0f));
+    const auto reading = amp.measureTone();
+    REQUIRE(amp.setParameter(pedal, 0.0f));
+    REQUIRE(reading.error.isEmpty());
+    CHECK(reading.touchDb == Catch::Approx(expected.touch).margin(0.5f));
+    CHECK(reading.distortionLightPercent == Catch::Approx(expected.gentle).margin(1.5f));
+    CHECK(reading.distortionHardPercent == Catch::Approx(expected.hard).margin(1.5f));
+    CHECK(reading.levelDb - reading.levelDbCaptureAlone ==
+          Catch::Approx(expected.level).margin(0.5f));
+    return reading;
+  };
+
+  const auto clean = amp.measureTone();
+  CHECK(clean.touchDb == Catch::Approx(12.0f).margin(0.1f));
+  CHECK(clean.distortionHardPercent < 0.1f);
+
+  knob(params::odDrive, 0.0f);
+  knob(params::odTone, 0.5f);
+  knob(params::odLevel, 1.0f);
+  check("a Tube Screamer, Drive down and Level up", params::odOn, {7.2f, 0.4f, 9.1f, 4.2f});
+
+  knob(params::odDrive, 0.5f);
+  knob(params::odLevel, 0.5f);
+  const auto screamer = check("a Tube Screamer at noon", params::odOn, {4.9f, 7.1f, 14.5f, -3.0f});
+  CHECK(*screamer.bandChangeDb(1) == Catch::Approx(-7.4f).margin(1.0f));
+  CHECK(*screamer.bandChangeDb(4) == Catch::Approx(0.0f).margin(1.0f));
+
+  knob(params::odDrive, 1.0f);
+  check("a Tube Screamer, Drive up", params::odOn, {4.0f, 16.8f, 16.7f, -2.7f});
+
+  knob(params::fuzzAmount, 0.5f);
+  knob(params::fuzzTone, 0.5f);
+  knob(params::fuzzLevel, 0.5f);
+  const auto muff = check("a Muff at noon", params::fuzzOn, {0.4f, 19.5f, 20.7f, -1.5f});
+  CHECK(*muff.bandChangeDb(4) == Catch::Approx(-5.4f).margin(1.0f));
+
+  knob(params::distAmount, 0.5f);
+  knob(params::distTone, 0.5f);
+  knob(params::distLevel, 0.5f);
+  const auto rat = check("a RAT at noon", params::distOn, {0.2f, 27.7f, 34.7f, -3.6f});
+  CHECK(*rat.bandChangeDb(5) == Catch::Approx(7.0f).margin(1.0f));
+
+  // These are in the prompt itself, so what it tells the model about the built-in
+  // capture can't drift from what the built-in capture does.
+  CHECK(buildSystemPrompt(amp).contains(
+      "its touch_db is 0.2 at input 0, 1.2 at -12, 3.4 at -18 and 6.6 at -24"));
+  REQUIRE(amp.loadModel("builtin:BlackstarHT1").isEmpty());
+  for (const auto [input, touch] : {std::pair{0.0f, 0.2f}, std::pair{-12.0f, 1.2f},
+                                    std::pair{-18.0f, 3.4f}, std::pair{-24.0f, 6.6f}}) {
+    INFO("input " << input);
+    REQUIRE(amp.setParameter(params::input, input));
+    CHECK(amp.measureTone().touchDb == Catch::Approx(touch).margin(0.3f));
+  }
 }
 
 TEST_CASE("Replies are tidied for a chat without Markdown", "[agent]") {
@@ -1264,7 +1795,14 @@ TEST_CASE("The real amp: controls, sources and undo", "[agent]") {
   const auto model = amp.getModel();
   CHECK(model.source == "builtin:BlackstarHT1");
   REQUIRE(model.loudnessDb.has_value());
-  CHECK(*model.loudnessDb == Catch::Approx(-9.98).margin(0.01));
+  // Levels are matched, as the plugin starts, so every capture is as loud as the
+  // next and a swap leaves the output where it is.
+  CHECK(*model.loudnessDb == Catch::Approx(evil::loudness::targetDb));
+  rig.chain.setMatchingLevels(false);
+  // Without that, it's what the file says.
+  REQUIRE(amp.getModel().loudnessDb.has_value());
+  CHECK(*amp.getModel().loudnessDb == Catch::Approx(-9.98).margin(0.01));
+  rig.chain.setMatchingLevels(true);
   CHECK(amp.getIr().source == params::defaultIrSource);
 
   const auto before = amp.captureState();
@@ -1284,6 +1822,318 @@ TEST_CASE("The real amp: controls, sources and undo", "[agent]") {
   CHECK(rig.state.getRawParameterValue(params::output)->load() == Catch::Approx(0.0f));
 
   CHECK(amp.loadModel("/no/such/file.nam").isNotEmpty());
+}
+
+namespace {
+juce::File testData(const char *name) {
+  return juce::File(EVIL_TEST_DATA_DIR).getChildFile(name);
+}
+
+bool sameBytes(const juce::File &a, const juce::File &b) {
+  juce::MemoryBlock first, second;
+  return a.loadFileAsData(first) && b.loadFileAsData(second) && first == second;
+}
+
+int carriedFiles(const juce::File &preset) {
+  const auto xml = juce::parseXML(preset);
+  int count = 0;
+  if (xml != nullptr)
+    for (auto *carried : xml->getChildWithTagNameIterator("File")) {
+      juce::ignoreUnused(carried);
+      ++count;
+    }
+  return count;
+}
+
+/** Picks a user preset, and waits for its model to finish loading. */
+void loadPreset(HeadlessRig &rig, const juce::String &name) {
+  rig.presets.refreshUserPresets();
+  const int index = rig.presets.getNames().indexOf(name);
+  REQUIRE(index >= 0);
+  REQUIRE(rig.presets.load(index));
+  const auto deadline = juce::Time::getMillisecondCounter() + 10000u;
+  while (rig.chain.getModels().getStatus().state == evil::ModelManager::State::loading &&
+         juce::Time::getMillisecondCounter() < deadline)
+    juce::Thread::sleep(5);
+}
+} // namespace
+
+TEST_CASE("A saved preset carries its capture and IR", "[agent][presets]") {
+  TestFiles files;
+  const auto away = files.dir.getChildFile("my downloads");
+  REQUIRE(away.createDirectory());
+  const auto nam = away.getChildFile("Twin, clean #1.nam");
+  const auto wav = away.getChildFile("4x12.wav");
+  REQUIRE(testData("parity_wavenet.nam").copyFileTo(nam));
+  REQUIRE(testData("parity_output.wav").copyFileTo(wav));
+
+  HeadlessRig rig;
+  auto &amp = rig.amp;
+  REQUIRE(amp.loadModel(nam.getFullPathName()).isEmpty());
+  CHECK(amp.getModel().gearType == "amp"); // from the file's own metadata
+  REQUIRE(amp.loadIr(wav.getFullPathName()).isEmpty());
+  REQUIRE(amp.setParameter(params::fuzzOn, 1.0f));
+  REQUIRE(amp.setParameter(params::eqBands[4], 3.0f));
+
+  juce::String error, warning;
+  REQUIRE(rig.presets.saveUserPreset("My Tone", error, &warning));
+  CHECK(warning.isEmpty());
+  const auto saved =
+      evil::PresetManager::getUserPresetDirectory().getChildFile("My Tone.evilpreset");
+  CHECK(carriedFiles(saved) == 2);
+  // It's all in that one file: nothing else was made to go with it.
+  CHECK_FALSE(evil::PresetManager::getSavedFilesDirectory().exists());
+
+  const auto changeEverything = [&amp] {
+    REQUIRE(amp.setParameter(params::fuzzOn, 0.0f));
+    REQUIRE(amp.setParameter(params::eqBands[4], 0.0f));
+    REQUIRE(amp.unloadModel().isEmpty());
+    REQUIRE(amp.loadIr(params::defaultIrSource).isEmpty());
+  };
+  const auto checkRestored = [&] {
+    const juce::File model(amp.getModel().source), ir(amp.getIr().source);
+    CHECK(model.isAChildOf(evil::PresetManager::getSavedFilesDirectory()));
+    CHECK(model.getFileExtension() == ".nam");
+    CHECK(sameBytes(model, testData("parity_wavenet.nam")));
+    CHECK(ir.isAChildOf(evil::PresetManager::getSavedFilesDirectory()));
+    CHECK(sameBytes(ir, testData("parity_output.wav")));
+    CHECK(rig.state.getRawParameterValue(params::fuzzOn)->load() == 1.0f);
+    CHECK(rig.state.getRawParameterValue(params::eqBands[4])->load() == Catch::Approx(3.0f));
+  };
+
+  SECTION("with the originals gone, it brings them back") {
+    REQUIRE(away.deleteRecursively());
+    changeEverything();
+    loadPreset(rig, "My Tone");
+    checkRestored();
+
+    // And it can be saved again from there, and go through it all once more.
+    REQUIRE(rig.presets.saveUserPreset("My Tone Again", error, &warning));
+    CHECK(warning.isEmpty());
+    const auto again =
+        evil::PresetManager::getUserPresetDirectory().getChildFile("My Tone Again.evilpreset");
+    CHECK(carriedFiles(again) == 2);
+    REQUIRE(evil::PresetManager::getSavedFilesDirectory().deleteRecursively());
+    changeEverything();
+    loadPreset(rig, "My Tone Again");
+    checkRestored();
+  }
+  SECTION("in a new copy of the amp, it comes back just the same") {
+    REQUIRE(away.deleteRecursively());
+    HeadlessRig another;
+    loadPreset(another, "My Tone");
+    const juce::File model(another.amp.getModel().source);
+    CHECK(sameBytes(model, testData("parity_wavenet.nam")));
+    CHECK(sameBytes(juce::File(another.amp.getIr().source), testData("parity_output.wav")));
+  }
+  SECTION("with the originals still there, it uses them and copies nothing") {
+    changeEverything();
+    loadPreset(rig, "My Tone");
+    CHECK(amp.getModel().source == nam.getFullPathName());
+    CHECK(amp.getIr().source == wav.getFullPathName());
+    CHECK_FALSE(evil::PresetManager::getSavedFilesDirectory().exists());
+  }
+  SECTION("if a file has changed since, it's the one that was saved that comes back") {
+    REQUIRE(nam.replaceWithText("{\"a\":\"different capture altogether\"}"));
+    REQUIRE(wav.replaceWithText("not the same IR any more"));
+    changeEverything();
+    loadPreset(rig, "My Tone");
+    checkRestored();
+    CHECK(nam.loadFileAsString().contains("different capture")); // and that one's left alone
+  }
+  SECTION("the agent's undo stays light, carrying only where things are") {
+    const auto undo = rig.presets.capture("agent undo");
+    CHECK(undo->getChildByName("File") == nullptr);
+    CHECK(undo->getStringAttribute("model") == nam.getFullPathName());
+  }
+  SECTION("a preset is one file: only its own show in the list") {
+    REQUIRE(away.deleteRecursively());
+    changeEverything();
+    loadPreset(rig, "My Tone");
+    rig.presets.refreshUserPresets();
+    CHECK(rig.presets.getNames().size() == rig.presets.getNumFactoryPresets() + 1);
+  }
+}
+
+TEST_CASE("A big file survives the trip byte for byte", "[agent][presets]") {
+  TestFiles files;
+  HeadlessRig rig;
+
+  // Every byte value, and far bigger than any real capture.
+  juce::MemoryBlock data(8 * 1024 * 1024);
+  juce::Random random(42);
+  random.fillBitsRandomly(data.getData(), data.getSize());
+  const auto big = files.dir.getChildFile("big.nam");
+  REQUIRE(big.replaceWithData(data.getData(), data.getSize()));
+
+  evil::PresetManager::Sources applied;
+  evil::PresetManager presets(
+      rig.state, [&big] { return evil::PresetManager::Sources{big.getFullPathName(), {}}; },
+      [&applied](const evil::PresetManager::Sources &s) { applied = s; });
+  juce::String error, warning;
+  REQUIRE(presets.saveUserPreset("Big", error, &warning));
+  CHECK(warning.isEmpty());
+  REQUIRE(big.deleteFile());
+
+  REQUIRE(presets.load(presets.getNames().indexOf("Big")));
+  juce::MemoryBlock back;
+  REQUIRE(juce::File(applied.model).loadFileAsData(back));
+  CHECK(back == data);
+}
+
+TEST_CASE("A preset that can't carry a file still saves, and says so", "[agent][presets]") {
+  TestFiles files;
+  const auto nam = files.dir.getChildFile("gone.nam");
+  REQUIRE(testData("parity_wavenet.nam").copyFileTo(nam));
+  HeadlessRig rig;
+  REQUIRE(rig.amp.loadModel(nam.getFullPathName()).isEmpty());
+  REQUIRE(nam.deleteFile()); // still playing, from memory
+
+  juce::String error, warning;
+  REQUIRE(rig.presets.saveUserPreset("Without", error, &warning));
+  CHECK(error.isEmpty());
+  CHECK(warning.contains("capture"));
+  CHECK(warning.contains("gone.nam"));
+  const auto saved =
+      evil::PresetManager::getUserPresetDirectory().getChildFile("Without.evilpreset");
+  CHECK(carriedFiles(saved) == 0); // the built-in IR needs no carrying, and isn't warned about
+  CHECK_FALSE(warning.contains("IR"));
+
+  const auto xml = juce::parseXML(saved);
+  REQUIRE(xml != nullptr);
+  CHECK(xml->getStringAttribute("model") == nam.getFullPathName());
+  CHECK(xml->getNumChildElements() > 0); // every setting is in there
+}
+
+TEST_CASE("A preset of built-ins carries nothing, and an old one still loads", "[agent][presets]") {
+  TestFiles files;
+  HeadlessRig rig;
+  REQUIRE(rig.amp.loadModel("builtin:BlackstarHT1").isEmpty());
+  juce::String error, warning;
+  REQUIRE(rig.presets.saveUserPreset("Built in", error, &warning));
+  CHECK(warning.isEmpty());
+  CHECK(carriedFiles(evil::PresetManager::getUserPresetDirectory().getChildFile(
+            "Built in.evilpreset")) == 0);
+  loadPreset(rig, "Built in");
+  CHECK(rig.amp.getModel().source == "builtin:BlackstarHT1");
+
+  // From before presets carried anything: just a path, which is still followed.
+  const auto nam = files.dir.getChildFile("old.nam");
+  REQUIRE(testData("parity_wavenet.nam").copyFileTo(nam));
+  juce::XmlElement old("Preset");
+  old.setAttribute("name", "Old");
+  old.setAttribute("model", nam.getFullPathName());
+  old.setAttribute("ir", params::defaultIrSource);
+  REQUIRE(old.writeTo(evil::PresetManager::getUserPresetDirectory().getChildFile("Old.evilpreset")));
+  loadPreset(rig, "Old");
+  CHECK(rig.amp.getModel().source == nam.getFullPathName());
+}
+
+TEST_CASE("A carried TONE3000 file keeps its credit and what it is", "[agent][presets]") {
+  TestFiles files;
+  const auto dir = Tone3000::getLibraryDirectory().getChildFile("36640");
+  REQUIRE(dir.createDirectory());
+  const auto nam = dir.getChildFile("9-Twin.nam");
+  // Its own metadata says nothing about what it is, so its page's word goes.
+  const auto tagged = testData("parity_wavenet.nam").loadFileAsString();
+  const auto untagged = tagged.replace("\"gear_type\": \"amp\"", "\"gear_type\": \"\"");
+  REQUIRE(untagged != tagged);
+  REQUIRE(nam.replaceWithText(untagged));
+  const juce::String attribution = R"json({"credit":"Twin by someone (CC BY)",
+                                           "url":"https://www.tone3000.com/tones/twin-36640",
+                                           "gear":"amp-cab"})json";
+  REQUIRE(dir.getChildFile(evil::PresetManager::attributionFileName).replaceWithText(attribution));
+
+  HeadlessRig rig;
+  REQUIRE(rig.amp.loadModel(nam.getFullPathName()).isEmpty());
+  CHECK(Tone3000::creditForSource(nam.getFullPathName()).contains("Twin by someone"));
+  juce::String error;
+  REQUIRE(rig.presets.saveUserPreset("With credit", error));
+
+  // Say the library was cleared out.
+  REQUIRE(Tone3000::getLibraryDirectory().deleteRecursively());
+  REQUIRE(rig.amp.unloadModel().isEmpty());
+  loadPreset(rig, "With credit");
+
+  const auto restored = rig.amp.getModel().source;
+  REQUIRE(restored.isNotEmpty());
+  CHECK(restored != nam.getFullPathName());
+  CHECK(Tone3000::creditForSource(restored).contains("Twin by someone"));
+  CHECK(Tone3000::gearForSource(restored) == "amp-cab");
+  CHECK(describeAmpState(rig.amp).contains("(has its own cabinet)"));
+
+  // Beyond what the amp has put there, a file beside it means nothing.
+  const auto elsewhere = files.dir.getChildFile("elsewhere");
+  REQUIRE(elsewhere.createDirectory());
+  REQUIRE(elsewhere.getChildFile(evil::PresetManager::attributionFileName)
+              .replaceWithText(R"({"credit":"Not real"})"));
+  CHECK(Tone3000::creditForSource(elsewhere.getChildFile("x.nam").getFullPathName()).isEmpty());
+}
+
+TEST_CASE("A preset from anywhere can't choose where its files go", "[agent][presets]") {
+  TestFiles files;
+  HeadlessRig rig;
+  const auto presetDir = evil::PresetManager::getUserPresetDirectory();
+  REQUIRE(presetDir.createDirectory());
+  const auto savedFiles = evil::PresetManager::getSavedFilesDirectory();
+  const juce::String body = R"({"version":"0.5.4"})";
+  const auto encoded = juce::Base64::toBase64(body.toRawUTF8(), body.getNumBytesAsUTF8());
+
+  const auto loadWith = [&](const juce::String &role, const juce::String &name,
+                            const juce::String &text) {
+    juce::XmlElement preset("Preset");
+    preset.setAttribute("name", "Stranger");
+    preset.setAttribute("model", "/no/such/capture.nam");
+    preset.setAttribute("ir", "/no/such/ir.wav");
+    auto *carried = preset.createNewChildElement("File");
+    carried->setAttribute("for", role);
+    carried->setAttribute("name", name);
+    carried->addTextElement(text);
+    REQUIRE(preset.writeTo(presetDir.getChildFile("Stranger.evilpreset")));
+    loadPreset(rig, "Stranger");
+    return rig.chain.getModels().getRequestedSource();
+  };
+  /** Nothing has appeared anywhere but under the amp's saved files. */
+  const auto checkContained = [&] {
+    for (const auto &file : files.dir.findChildFiles(juce::File::findFiles, true)) {
+      INFO(file.getFullPathName());
+      CHECK((file.isAChildOf(savedFiles) || file.getParentDirectory() == presetDir ||
+             file.getFileName() == "agent.xml"));
+    }
+  };
+
+  SECTION("a name that tries to climb out stays in") {
+    for (const auto *name : {"../../../evil.nam", "..\\..\\..\\evil.nam", "/tmp/evil.nam",
+                             "sub/dir/evil.nam", "C:\\evil.nam"}) {
+      INFO(name);
+      const juce::File where(loadWith("model", name, encoded));
+      CHECK(where.isAChildOf(savedFiles));
+      CHECK(where.getParentDirectory().getParentDirectory() == savedFiles);
+      CHECK(where.getFileExtension() == ".nam");
+      checkContained();
+    }
+  }
+  SECTION("a file that isn't the kind its slot loads isn't written") {
+    for (const auto *name : {"evil.sh", "evil", "evil.nam.desktop", "..", ".", ""}) {
+      INFO(name);
+      CHECK(loadWith("model", name, encoded) == "/no/such/capture.nam");
+    }
+    CHECK(loadWith("ir", "evil.nam", encoded) == "/no/such/capture.nam");
+    CHECK(rig.chain.getCab().getSource() != savedFiles.getFullPathName());
+    CHECK_FALSE(savedFiles.exists());
+  }
+  SECTION("anything else it might be is ignored") {
+    CHECK(loadWith("something", "evil.nam", encoded) == "/no/such/capture.nam");
+    CHECK(loadWith("model", "evil.nam", "!!! not base 64 !!!") == "/no/such/capture.nam");
+    CHECK(loadWith("model", "evil.nam", "") == "/no/such/capture.nam");
+    CHECK_FALSE(savedFiles.exists());
+  }
+  SECTION("the same file is only kept once, whatever it's called") {
+    const auto first = loadWith("model", "one.nam", encoded);
+    const auto second = loadWith("model", "one.nam", encoded);
+    CHECK(first == second);
+    CHECK(savedFiles.getNumberOfChildFiles(juce::File::findDirectories) == 1);
+  }
 }
 
 TEST_CASE("Going back holds the level down until the old model is playing", "[agent]") {
@@ -1553,6 +2403,28 @@ TEST_CASE("A record of what the agent did goes to the log", "[agent]") {
   CHECK_FALSE(lines.joinIntoString("\n").contains("sk-test"));
 }
 
+TEST_CASE("The player is told when the agent has answered, and only then", "[agent]") {
+  Chat chat;
+  std::atomic<int> answers{0};
+  chat.session->setOnAnswered([&] { ++answers; });
+
+  chat.http->reply(200, turnSetsFuzz);
+  chat.http->reply(200, turnDone);
+  chat.say("more fuzz");
+  CHECK(answers == 1);
+
+  chat.http->reply(200, turnSetsFuzz);
+  for (int i = 0; i <= Session::maxFreshStartsPerTurn; ++i) // turned down every time
+    chat.http->reply(400, R"({"error":{"message":"bad request"}})");
+  chat.say("failing");
+  CHECK(answers == 1);
+
+  // No key: nothing was asked, so nothing was answered.
+  chat.files.settings.setApiKey(ProviderId::anthropic, "");
+  chat.say("no key");
+  CHECK(answers == 1);
+}
+
 TEST_CASE("Web searches have a limit, since they cost the player money", "[agent]") {
   // One search a step, without end.
   const auto searchingTurn = [](int step) {
@@ -1600,7 +2472,8 @@ TEST_CASE("A failed turn starts the provider's thread over, with the chat as con
   chat.say("first");
 
   chat.http->reply(200, turnSetsFuzz);
-  chat.http->reply(400, R"({"error":{"message":"bad request"}})");
+  for (int i = 0; i <= Session::maxFreshStartsPerTurn; ++i) // turned down every time
+    chat.http->reply(400, R"({"error":{"message":"bad request"}})");
   const auto failed = chat.say("second");
   bool sawError = false, canRevert = false;
   for (const auto &entry : failed) {
@@ -1622,6 +2495,109 @@ TEST_CASE("A failed turn starts the provider's thread over, with the chat as con
   CHECK(text.contains("third"));
   // Only the one before it, not the message itself, in the recap.
   CHECK_FALSE(text.contains("Player: third"));
+}
+
+// A Gemini step that searches, says something, cites a page and turns the fuzz on.
+const char *const geminiSetsFuzz = R"({"id":"int_1","steps":[
+  {"type":"google_search_call","arguments":{"queries":["fuzz settings"]}},
+  {"type":"model_output","content":[{"type":"text","text":"Adding fuzz.",
+    "annotations":[{"type":"url_citation","url":"https://example.com/h","title":"H"}]}]},
+  {"type":"function_call","id":"f1","name":"set_parameters",
+    "arguments":{"changes":[{"id":"fuzz_on","value":1}]}}]})";
+// As the live API sent it, part-way through a turn.
+const char *const geminiInvalidArgument = R"([{"error":{"code":400,
+  "message":"Request contains an invalid argument.","status":"INVALID_ARGUMENT"}}])";
+
+TEST_CASE("A turned-down request carries on in a fresh conversation", "[agent]") {
+  Chat chat;
+  chat.files.settings.setProvider(ProviderId::gemini);
+  chat.files.settings.setApiKey(ProviderId::gemini, "g-key-123");
+  juce::StringArray lines;
+  std::mutex lock;
+  chat.session->setLogger([&](const juce::String &line) {
+    std::lock_guard guard(lock);
+    lines.add(line);
+  });
+  chat.http->reply(200, geminiSetsFuzz);
+  chat.http->reply(400, geminiInvalidArgument);
+  chat.http->reply(200, R"({"id":"int_2","steps":[{"type":"model_output","content":[{"type":"text","text":"Done."}]}]})");
+
+  const auto entries = chat.say("more fuzz please");
+  using Kind = Session::Entry::Kind;
+  CHECK(entries.back().kind == Kind::assistant);
+  CHECK(entries.back().text == "Done.");
+  CHECK(entries.back().before != nullptr); // still one turn, so one undo
+  bool toldThePlayer = false;
+  for (const auto &entry : entries) {
+    CHECK(entry.kind != Kind::error);
+    toldThePlayer = toldThePlayer || entry.text.contains("fresh conversation");
+  }
+  CHECK(toldThePlayer);
+  CHECK(chat.amp.get(params::fuzzOn) == 1.0f);
+
+  const auto sent = chat.http->getRequests();
+  REQUIRE(sent.size() == 3);
+  CHECK(bodyOf(sent[1])["previous_interaction_id"].toString() == "int_1");
+  // The fresh one leaves the turned-down conversation behind, and has the work.
+  const auto fresh = bodyOf(sent[2]);
+  CHECK(fresh["previous_interaction_id"].isVoid());
+  const auto input = fresh["input"].toString();
+  CHECK(input.contains("Carrying on"));
+  CHECK(input.contains("Request contains an invalid argument."));
+  CHECK(input.contains("more fuzz please"));
+  CHECK(input.contains("You searched the web for: fuzz settings"));
+  CHECK(input.contains("You told the player: Adding fuzz."));
+  CHECK(input.contains("You called set_parameters with"));
+  CHECK(input.contains("fuzz_on"));
+  CHECK(input.contains("It returned:"));
+  CHECK(input.contains("https://example.com/h"));
+  CHECK(input.contains("14 web searches left"));
+  CHECK(input.contains("[The amp right now."));
+  CHECK(fresh["system_instruction"].toString().isNotEmpty());
+
+  {
+    // What was turned down is in the log, to find out why.
+    std::lock_guard guard(lock);
+    const auto log = lines.joinIntoString("\n");
+    CHECK(log.contains("Agent request turned down: HTTP 400"));
+    CHECK(log.contains("INVALID_ARGUMENT"));
+    CHECK(log.contains("int_1"));
+    CHECK_FALSE(log.contains("g-key-123"));
+  }
+
+  // That turn finished, so the next message goes on in the new conversation.
+  chat.http->reply(200, R"({"id":"int_3","steps":[{"type":"model_output","content":[{"type":"text","text":"Sure."}]}]})");
+  chat.say("thanks");
+  const auto next = bodyOf(chat.http->getRequests().back());
+  CHECK(next["previous_interaction_id"].toString() == "int_2");
+  CHECK_FALSE(next["input"].toString().contains("Earlier in this chat"));
+}
+
+TEST_CASE("Fresh starts are limited, and the last one is shorter", "[agent]") {
+  Chat chat;
+  chat.files.settings.setProvider(ProviderId::gemini);
+  chat.files.settings.setApiKey(ProviderId::gemini, "g");
+  chat.http->reply(200, geminiSetsFuzz);
+  for (int i = 0; i <= Session::maxFreshStartsPerTurn; ++i)
+    chat.http->reply(400, geminiInvalidArgument);
+
+  const auto entries = chat.say("more fuzz please");
+  const auto sent = chat.http->getRequests();
+  REQUIRE(sent.size() == 2 + (size_t)Session::maxFreshStartsPerTurn);
+  const auto first = bodyOf(sent[2])["input"].toString();
+  const auto last = bodyOf(sent.back())["input"].toString();
+  CHECK(first.contains("It returned:"));
+  // In case it was the length: still what was done, without the results.
+  CHECK(last.contains("You called set_parameters with"));
+  CHECK_FALSE(last.contains("It returned:"));
+  CHECK(last.contains("left out, for length"));
+
+  int errors = 0;
+  for (const auto &entry : entries)
+    errors += entry.kind == Session::Entry::Kind::error ? 1 : 0;
+  CHECK(errors == 1); // said once, when it gave up
+  CHECK(entries.back().text.contains("didn't get all the way"));
+  CHECK(entries.back().before != nullptr); // the fuzz can still be undone
 }
 
 TEST_CASE("Switching provider or model starts a new thread", "[agent]") {

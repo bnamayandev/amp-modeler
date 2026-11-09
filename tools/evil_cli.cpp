@@ -21,9 +21,13 @@
 //   --model <path|builtin:Name>  --ir <path|builtin:Name>
 //   --no-model  --no-cab  --no-gate  --input-db X  --output-db X  --block N
 //   --exact-tanh (default: NAM's fast tanh, as in the plugin)
+//   --raw-levels (play each capture and IR at its own level; by default they're
+//   matched, as the plugin does unless that's turned off in its settings)
 //   --transpose N (semitones)  --pedals wah,comp,fuzz,od,dist,boost,phaser,
 //   flanger,chorus,trem,delay,reverb|all (each at its default settings)
-//   --set od_drive=0.3,od_tone=0.6,eq_800=2  (knobs and EQ bands, by parameter id)
+//   --set od_drive=0.3,od_tone=0.6,eq_800=2  (knobs and EQ bands, by parameter id.
+//   Drive and tone knobs are 0..1, but levels and EQ are in dB: noon on a level knob
+//   is od_level=-3.64, fuzz_level=-4.46 or dist_level=-6.96)
 //
 // `esr` runs the model alone (no gate, cab or EQ) at the file's sample rate,
 // so a 44.1 kHz file exercises the resampling path, and compares against the
@@ -33,6 +37,7 @@
 #include "agent/HeadlessRig.h"
 #include "agent/Session.h"
 #include "agent/ToneMeter.h"
+#include "dsp/Loudness.h"
 #include "dsp/SignalChain.h"
 
 #include <juce_audio_devices/juce_audio_devices.h>
@@ -190,6 +195,7 @@ SignalChain::Settings settingsFrom(const Options &o) {
  * on silence. */
 void setUp(SignalChain &chain, const Options &o, double sampleRate, int block,
            const SignalChain::Settings &s) {
+  chain.setMatchingLevels(!o.has("--raw-levels"));
   chain.prepare(sampleRate, block);
   juce::String error;
   if (!chain.getCab().load(o.get("--ir", "builtin:EvilCab4x12"), error))
@@ -380,14 +386,18 @@ int info(const Options &o) {
   if (!models.loadSynchronously(o.positional[0], error))
     fail(error);
   const auto i = models.getStatus().info;
-  std::printf("name:          %s\ngear:          %s\narchitecture:  "
+  std::printf("name:          %s\ngear:          %s\ngear type:     %s\narchitecture:  "
               "%s\nweights:       %d\nsample rate:   %.0f Hz\n",
-              i.name.toRawUTF8(), i.gear.toRawUTF8(),
+              i.name.toRawUTF8(), i.gear.toRawUTF8(), i.gearType.toRawUTF8(),
               i.architecture.toRawUTF8(), i.numWeights, i.sampleRate);
   std::printf(
-      "loudness:      %s\nvalidation ESR %s\nheld-out ESR: %s\n",
-      i.hasLoudness ? (juce::String(i.loudnessDb, 2) + " dB").toRawUTF8()
+      "loudness:      %s\nmeasured level %s\nvalidation ESR %s\nheld-out ESR: %s\n",
+      i.hasLoudness ? (juce::String(i.loudnessDb, 2) + " dB (the file's)").toRawUTF8()
                     : "unknown",
+      i.hasLevel ? (juce::String(i.levelDb, 2) + " dB, matched by " +
+                    juce::String(evil::loudness::targetDb - i.levelDb, 1) + " dB")
+                       .toRawUTF8()
+                 : "unknown",
       i.validationEsr >= 0 ? juce::String(i.validationEsr, 5).toRawUTF8()
                            : "unknown",
       i.testEsr >= 0 ? juce::String(i.testEsr, 5).toRawUTF8() : "unknown");
@@ -507,15 +517,27 @@ int commandMeasure(const Options &options) {
                          ? juce::String()
                          : options.get("--model", "builtin:BlackstarHT1");
   const auto r = evil::agent::measureTone(settingsFrom(options), model,
-                                          options.get("--ir", "builtin:EvilCab4x12"));
+                                          options.get("--ir", "builtin:EvilCab4x12"),
+                                          !options.has("--raw-levels"));
   if (r.error.isNotEmpty())
     fail(r.error);
-  printf("level %6.1f dB | touch %5.1f dB (alone %5.1f) | distortion gentle %5.1f%% hard "
-         "%5.1f%% (alone %4.1f%% %4.1f%%)\n  bands vs alone:",
-         r.levelDb, r.touchDb, r.touchDbCaptureAlone, r.distortionLightPercent,
+  printf("level %6.1f dB (alone %6.1f) | touch %5.1f dB (alone %5.1f) | distortion gentle "
+         "%5.1f%% hard %5.1f%% (alone %4.1f%% %4.1f%%)\n  bands vs alone:",
+         r.levelDb, r.levelDbCaptureAlone, r.touchDb, r.touchDbCaptureAlone,
+         r.distortionLightPercent,
          r.distortionHardPercent, r.distortionLightCaptureAlone, r.distortionHardCaptureAlone);
+  // The same readings the model gets: "--" is a null, for next to nothing there.
   for (size_t b = 0; b < r.bandDb.size(); ++b)
-    printf(" %+5.1f", r.bandDb[b] - r.bandDbCaptureAlone[b]);
+    if (const auto change = r.bandChangeDb(b))
+      printf(" %+5.1f", *change);
+    else
+      printf("    --");
+  printf("\n  shape:         ");
+  for (size_t b = 0; b < r.bandDb.size(); ++b)
+    if (r.bandDb[b] < evil::agent::ToneReading::emptyBandDb)
+      printf("    --");
+    else
+      printf(" %+5.1f", r.bandDb[b]);
   printf("\n");
   return 0;
 }

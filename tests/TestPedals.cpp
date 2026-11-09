@@ -1,4 +1,5 @@
 #include "TestHelpers.h"
+#include "dsp/Chime.h"
 #include "dsp/Metronome.h"
 #include "dsp/SignalChain.h"
 #include "state/Parameters.h"
@@ -67,7 +68,185 @@ float maxStep(const std::vector<float> &x, size_t from, size_t to) {
     m = std::max(m, std::abs(x[i] - x[i - 1]));
   return m;
 }
+
+/** A note with its first few harmonics, rolling off like a plucked string. */
+std::vector<float> harmonicNote(double freq, double sampleRate, int count,
+                                float level) {
+  std::vector<float> x((size_t)count, 0.0f);
+  for (int h = 1; h <= 5; ++h) {
+    const auto partial =
+        sine(freq * h, sampleRate, count, level / (float)h);
+    for (size_t i = 0; i < x.size(); ++i)
+      x[i] += partial[i];
+  }
+  return x;
+}
+
+/** How far the level has got: the first sample at or after `from` where a 1 ms
+    RMS reaches half way from the level before `from` to the level after it. */
+size_t riseTime(const std::vector<float> &x, size_t from, double sampleRate) {
+  const int window = (int)(0.001 * sampleRate);
+  const auto level = [&](size_t end) {
+    return rms(x.data() + end - (size_t)window, window);
+  };
+  double before = 0.0, after = 0.0;
+  for (size_t i = from - (size_t)(0.03 * sampleRate); i < from; ++i)
+    before = std::max(before, (double)level(i));
+  for (size_t i = from; i < from + (size_t)(0.06 * sampleRate); ++i)
+    after = std::max(after, (double)level(i));
+  const double half = 0.5 * (before + after);
+  size_t i = from;
+  while (i < x.size() - 1 && level(i) < half)
+    ++i;
+  return i;
+}
+
+struct AttackDelay {
+  double meanMs = 0.0, worstMs = 0.0;
+};
+
+/** The delay a sudden jump in level picks up on its way through the transposer,
+    sampled at irregular moments so they fall all over the read tap's travel. */
+AttackDelay attackDelay(double sampleRate, int semitones, double freq) {
+  const int count = (int)(sampleRate * 12.0);
+  auto x = harmonicNote(freq, sampleRate, count, 0.3f);
+
+  juce::Random random(5);
+  std::vector<size_t> attacks;
+  for (auto at = (size_t)sampleRate; at < x.size() - (size_t)sampleRate;
+       at += (size_t)((0.18 + 0.24 * random.nextDouble()) * sampleRate))
+    attacks.push_back(at);
+  const auto loud = (size_t)(0.06 * sampleRate);
+  for (size_t i = 0; i < x.size(); ++i) {
+    const auto next = std::upper_bound(attacks.begin(), attacks.end(), i);
+    const bool isLoud = next != attacks.begin() && i - *(next - 1) < loud;
+    x[i] *= isLoud ? 1.0f : 0.05f;
+  }
+
+  SignalChain chain;
+  chain.prepare(sampleRate, block);
+  auto s = neutral();
+  s.transposeSemitones = semitones;
+  auto y = x;
+  run(chain, y, s);
+
+  AttackDelay result;
+  for (const size_t at : attacks) {
+    const double ms = 1000.0 *
+                      ((double)riseTime(y, at, sampleRate) -
+                       (double)riseTime(x, at, sampleRate)) /
+                      sampleRate;
+    result.meanMs += ms;
+    result.worstMs = std::max(result.worstMs, ms);
+  }
+  result.meanMs /= (double)attacks.size();
+  return result;
+}
+
+/** Level (dB) of everything further than widthHz from any of the given
+    frequencies, relative to what's near them: how clean a shift came out. */
+double residualDb(const std::vector<float> &x, size_t from,
+                  const std::vector<double> &freqs, double widthHz) {
+  constexpr int order = 16;
+  const size_t size = (size_t)1 << order;
+  std::vector<float> buffer(size * 2, 0.0f);
+  std::copy_n(x.begin() + (std::ptrdiff_t)from, size, buffer.begin());
+  juce::dsp::WindowingFunction<float> window(
+      size, juce::dsp::WindowingFunction<float>::hann, false);
+  window.multiplyWithWindowingTable(buffer.data(), size);
+  juce::dsp::FFT(order).performFrequencyOnlyForwardTransform(buffer.data());
+
+  double near = 1.0e-30, far = 1.0e-30;
+  const double binHz = rate / (double)size;
+  for (size_t bin = 1; bin < size / 2; ++bin) {
+    const double f = (double)bin * binHz;
+    const bool isNear = std::any_of(freqs.begin(), freqs.end(), [&](double t) {
+      return std::abs(f - t) <= widthHz;
+    });
+    (isNear ? near : far) += (double)buffer[bin] * buffer[bin];
+  }
+  return 10.0 * std::log10(far / near);
+}
 } // namespace
+
+TEST_CASE("The transposer adds little delay to single notes",
+          "[pedals][transpose]") {
+  // The tap only has to travel about one period of what's being played: ~12 ms
+  // on a low E, a few ms up the neck. (Going down, an attack takes 1/ratio
+  // times the tap's delay to reach it, so an octave down doubles it.) The old
+  // fixed 32 ms window averaged ~15 ms on both, and 30-40 ms at worst.
+  const double sampleRate = GENERATE(44100.0, 48000.0, 96000.0);
+  const std::vector<int> intervals = {-12, -5, -2, -1, 1, 2, 5, 12};
+
+  for (const auto &[note, freq, meanLimit, worstLimit] :
+       {std::tuple{"low E", 82.41, 11.0, 28.0},
+        std::tuple{"A4", 440.0, 7.0, 14.0}}) {
+    double mean = 0.0, worst = 0.0;
+    for (const int semitones : intervals) {
+      const auto delay = attackDelay(sampleRate, semitones, freq);
+      UNSCOPED_INFO(note << " " << semitones << " st: mean " << delay.meanMs
+                         << " ms, worst " << delay.worstMs << " ms");
+      mean += delay.meanMs / (double)intervals.size();
+      worst = std::max(worst, delay.worstMs);
+    }
+    INFO(sampleRate << " Hz, " << note << ": mean " << mean << " ms, worst "
+                    << worst << " ms");
+    CHECK(mean < meanLimit);
+    CHECK(worst < worstLimit);
+  }
+}
+
+TEST_CASE("A low-E power chord stays clean through the transposer",
+          "[pedals][transpose]") {
+  // Its notes only line up every 24 ms; a shorter jump leaves the chord warbling
+  // however well it's chosen. Guards the longest jump the search may use.
+  const int semitones = GENERATE(-2, -1, 1, 2);
+  const std::vector<double> notes = {82.41, 123.47, 164.81};
+  const int count = (int)rate * 2;
+  std::vector<float> x((size_t)count, 0.0f);
+  for (const double f : notes) {
+    const auto note = harmonicNote(f, rate, count, 0.1f);
+    for (size_t i = 0; i < x.size(); ++i)
+      x[i] += note[i];
+  }
+
+  SignalChain chain;
+  chain.prepare(rate, block);
+  auto s = neutral();
+  s.transposeSemitones = semitones;
+  run(chain, x, s);
+
+  const double ratio = std::exp2(semitones / 12.0);
+  std::vector<double> shifted;
+  for (const double f : notes)
+    for (int h = 1; h <= 5; ++h)
+      shifted.push_back(f * h * ratio);
+  const double residual = residualDb(x, (size_t)rate / 2, shifted, 3.0);
+  INFO(semitones << " st: residual " << residual << " dB");
+  CHECK(residual < -15.0);
+}
+
+TEST_CASE("High notes stay in tune through many short splices",
+          "[pedals][transpose]") {
+  // Up the neck the tap splices every few ms; a jump rounded to the sample
+  // would add up to a pitch error and smear the upper harmonics.
+  const int semitones = GENERATE(-7, -5, 5, 7);
+  auto x = harmonicNote(659.25, rate, (int)rate * 2, 0.15f);
+
+  SignalChain chain;
+  chain.prepare(rate, block);
+  auto s = neutral();
+  s.transposeSemitones = semitones;
+  run(chain, x, s);
+
+  const double ratio = std::exp2(semitones / 12.0);
+  std::vector<double> shifted;
+  for (int h = 1; h <= 5; ++h)
+    shifted.push_back(659.25 * h * ratio);
+  const double residual = residualDb(x, (size_t)rate / 2, shifted, 15.0);
+  INFO(semitones << " st: residual " << residual << " dB");
+  CHECK(residual < -30.0);
+}
 
 TEST_CASE("The transposer shifts pitch by the requested interval",
           "[pedals][transpose]") {
@@ -871,6 +1050,52 @@ TEST_CASE("The metronome clicks on the beat and accents the bar",
   for (size_t i = 2400; i < y.size(); ++i)
     REQUIRE(y[i] == 0.25f);
   CHECK(metronome.getBeatInBar() == -1);
+}
+
+TEST_CASE("The chime is quiet, soft at the start, and then gone", "[chime]") {
+  Chime chime;
+  chime.prepare(rate);
+  const auto render = [&](std::vector<float> &l, std::vector<float> &r) {
+    for (size_t start = 0; start < l.size(); start += block) {
+      float *channels[] = {l.data() + start, r.data() + start};
+      chime.process(channels, 2, (int)std::min<size_t>(block, l.size() - start));
+    }
+  };
+
+  // Nothing until it's asked for.
+  std::vector<float> l((size_t)rate, 0.25f), r((size_t)rate, -0.5f);
+  render(l, r);
+  for (size_t i = 0; i < l.size(); ++i) {
+    REQUIRE(l[i] == 0.25f);
+    REQUIRE(r[i] == -0.5f);
+  }
+
+  chime.trigger();
+  std::vector<float> a((size_t)rate * 2, 0.0f), b(a.size(), 0.0f);
+  render(a, b);
+  float peak = 0.0f, biggestStep = 0.0f;
+  size_t last = 0;
+  for (size_t i = 0; i < a.size(); ++i) {
+    REQUIRE(a[i] == b[i]); // the same on every channel
+    peak = std::max(peak, std::abs(a[i]));
+    if (i > 0)
+      biggestStep = std::max(biggestStep, std::abs(a[i] - a[i - 1]));
+    if (a[i] != 0.0f)
+      last = i;
+  }
+  INFO("peak " << juce::Decibels::gainToDecibels(peak) << " dBFS");
+  CHECK(peak > juce::Decibels::decibelsToGain(Chime::levelDb - 3.0f));
+  CHECK(peak < juce::Decibels::decibelsToGain(Chime::levelDb + 3.0f));
+  CHECK(std::abs(a[0]) < 1.0e-4f); // eases in rather than clicking
+  CHECK(biggestStep < 0.35f * peak);
+  CHECK(last < (size_t)(Chime::lengthSeconds * rate));
+  CHECK(std::abs(a[last]) < 1.0e-4f); // and out
+
+  // Asked again, it plays again.
+  chime.trigger();
+  std::vector<float> c((size_t)rate / 4, 0.0f), d(c.size(), 0.0f);
+  render(c, d);
+  CHECK(*std::max_element(c.begin(), c.end()) > 0.5f * peak);
 }
 
 namespace {

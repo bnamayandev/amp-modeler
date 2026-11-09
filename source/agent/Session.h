@@ -48,6 +48,12 @@ public:
   void setLogger(std::function<void(const juce::String &)> newLogger) {
     logger = std::move(newLogger);
   }
+  /** Called on the agent's thread each time it finishes answering a message (not
+      when it's stopped or fails), so the player can hear it's done without
+      watching. Set once, before anything is sent. */
+  void setOnAnswered(std::function<void()> callback) {
+    onAnswered = std::move(callback);
+  }
 
   /** Any thread. */
   std::vector<Entry> getEntries() const;
@@ -72,12 +78,17 @@ public:
   static constexpr int wrapUpSteps = 4;
   /** A message's web searches, which cost the player money on top of the tokens. */
   static constexpr int maxSearchesPerTurn = 15;
+  /** How many times one message carries on in a fresh conversation after the
+      provider turns a request down, before it gives up. */
+  static constexpr int maxFreshStartsPerTurn = 2;
 
 private:
   void run() override;
   bool post(std::function<void()> job);
   void runTurn(const juce::String &text);
   ModelReply askWithRetries();
+  /** Writes what was turned down to the log, so the cause can be found. */
+  void logTurnedDown(const HttpRequest &, const HttpResponse &) const;
   void prepareProvider(ProviderId, const juce::String &apiKey);
   juce::String earlierConversation() const;
   bool cancelled() const;
@@ -90,6 +101,7 @@ private:
   std::unique_ptr<HttpClient> http;
   Tone3000::OpenBrowser customOpener;
   std::function<void(const juce::String &)> logger;
+  std::function<void()> onAnswered;
   Tone3000 tone3000;
   ToolBox tools;
 

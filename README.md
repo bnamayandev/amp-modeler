@@ -69,15 +69,20 @@ plugin where your DAW looks:
 
 - **Input** drives the amp (a NAM model expects roughly instrument level; turn up if your
   interface gain is low). **Gate** is the threshold; the LED is green when it's open.
-- **Amp**: runs the loaded `.nam` model as it is, with nothing added and no level
-  adjustment. Models differ in loudness, so set **Output** to taste.
+- **Amp**: runs the loaded `.nam` model as it is, with nothing added to its tone. Captures
+  differ in level by 30 dB or more, so with **normalise volume** (under **settings**, on unless
+  you turn it off) each one plays at the same volume: it's measured as it loads, with a test
+  guitar strummed at an everyday strength, and set to sound through the cabinet 15 dB quieter
+  than the built-in capture does with it off. Off, every capture plays at the level it was made at.
   - **Load .nam...** loads any NAM model (WaveNet, LSTM, A2, ... from ToneHunt/TONE3000, the
     official trainer, or `training/`). Loading happens off the audio thread and the switch
     crossfades over 40 ms. The panel shows the model's held-out ESR if its metadata has it.
   - **Unload** plays with no model: the amp passes clean.
 - **Cabinet**: built-in synthetic 4x12, shaped after real SM57 IRs, or **Load IR...** (WAV/AIFF/FLAC,
   any rate, mono or first channel of stereo, up to 2 s). A real IR will always be better than the
-  built-in one. IRs are energy-normalised and swap without clicks.
+  built-in one. IRs are energy-normalised and swap without clicks. With normalise volume on, each
+  is also scaled to change the capture's tone and not its level, which energy alone doesn't do: a
+  cabinet with a big low end can be several dB louder on a clean amp than on a driven one.
   Turn it off for models that already include a cab (mic'd captures).
 - **EQ**: nine-band graphic EQ, octave bands from 50 Hz to 12.8 kHz (a Boss GE-7's seven plus
   one at each end), ±15 dB each. A fader's number is exactly the change in dB at its band, however
@@ -127,8 +132,9 @@ plugin where your DAW looks:
 - **Agent** (the *agent* tab): tell it the sound you're after, and an AI model on your own API
   key looks up the gear and sets up the amp. See [the agent](#the-agent).
 - **Transpose** (bottom right): ±12 semitones, e.g. -1 for E-flat tuning. Polyphonic, with
-  splices aligned to the waveform; it costs ~16 ms of delay while on, and 0 ("off") bypasses
-  it completely.
+  splices aligned to the waveform. The delay it adds follows what you play: ~3 ms on average
+  up the neck, ~7 ms on a low E, ~13 ms on a low power chord (its notes only line up every
+  24 ms). 0 ("off") bypasses it completely.
 - **Metronome** (bottom left): start/stop, tempo (drag, or double-click to type), **tap**
   (each tap also restarts the bar), beats per bar (beat one clicks higher) and level. The
   click is mixed into the output. It always starts stopped.
@@ -136,6 +142,11 @@ plugin where your DAW looks:
   presets to `~/.config/EvilAmplifier/Presets` (Linux), `~/Library/EvilAmplifier/Presets`
   (macOS) or `%APPDATA%\EvilAmplifier\Presets` (Windows). Presets
   include the pedals but not the transposer or metronome settings, which stay as you set them.
+  A saved preset is one file that carries its capture and IR and their credit, so it keeps its
+  sound if the originals move or get deleted (one saved before this needs saving again). If a
+  file can't go with it, the save says so. Host sessions and the standalone's saved states still
+  only point to the files. TONE3000's terms don't allow passing its catalog on, so don't share a
+  preset that carries one of its captures.
 - **Log**: model loads, latency changes and CPU per block (every 30 s while playing) go to
   `EvilAmplifier.log` in `~/.config/EvilAmplifier/` (Linux), `~/Library/Logs/EvilAmplifier/`
   (macOS) or `%APPDATA%\EvilAmplifier\` (Windows).
@@ -155,9 +166,9 @@ already set, and its answer ends with a plan of what to stomp on when.
 
 It can't hear, so it measures: **measure_tone** plays a test guitar through a private copy of the amp
 and reports the spectrum, distortion and touch response (how much louder it gets when picked 12 dB
-harder), against the capture alone. `evil-cli measure` shows the same reading for any setup. It
-takes knob positions as a guide gives them, by clock or 0-10, and starts each new tone by clearing
-what the last one left.
+harder), against the same setup with the pedals and EQ out of it. `evil-cli measure` shows the
+same reading for any setup. It takes knob positions as a guide gives them, by clock or 0-10, and
+starts each new tone by clearing what the last one left.
 
 **Setup.** Under **keys**, paste an API key for any of these. You pay the provider directly, and
 requests go straight from your computer to them.
@@ -194,8 +205,9 @@ the transposer or metronome. The sign-in token only goes to TONE3000 over https.
 open only if they're http or https.
 
 **Level.** A NAM capture can be far louder than the last one, so the output is pulled down before a
-swap and set from the two captures' loudness figures after it (6 dB under where it was if a capture
-has no figure). The agent can raise the output by at most 6 dB at a time, up to +6 dB, and the input
+swap. With normalise volume on, every capture plays at the same level, so it goes back where it was.
+Off, it's set from the two captures' loudness figures (6 dB under where it was if a capture has no
+figure). The agent can raise the output by at most 6 dB at a time, up to +6 dB, and the input
 to +12 dB. These are enforced by the amp, not by asking the model.
 
 **Your keys** are kept in `agent.xml` beside your presets, readable only by your user. That's a
@@ -203,7 +215,8 @@ plain file, not the OS keychain. They're never in presets, sessions or the log.
 
 **Limits.** There's one neural slot and it's the amp, so a capture of a pedal can't sit in front of
 it: the agent uses the closest built-in pedal and says so. Replies appear when finished rather than
-word by word. Google's terms want its Search Suggestions shown with grounded answers; they arrive as
+word by word, with a soft two-note chime in the output (about -24 dBFS) so you know without
+watching. It doesn't chime when a turn is stopped or fails. Google's terms want its Search Suggestions shown with grounded answers; they arrive as
 HTML and this build has no web view, so they're shown as ordinary links.
 
 **Without a window:** `evil-cli agent "Make it creamier"` runs the same agent on a headless copy of
@@ -247,15 +260,15 @@ It also smoke-tests the training pipeline end to end.
 ## Test and measure
 
 ```bash
-build/tests/evil_tests_artefacts/Release/evil_tests          # 123 test cases
+build/tests/evil_tests_artefacts/Release/evil_tests          # 149 test cases
 pluginval --strictness-level 10 --validate-in-process "build/EvilAmplifier_artefacts/Release/VST3/Evil Amplifier.vst3"
 
 cli=build/evil-cli_artefacts/Release/evil-cli
 $cli bench --seconds 60 --block 128 --rate 48000              # CPU per block vs deadline (--csv for every block)
 $cli esr test-in.wav test-target.wav --model my.nam            # held-out ESR through the plugin's C++ path
-$cli render guitar.wav out.wav --model my.nam --ir cab.wav     # offline render, latency compensated
+$cli render guitar.wav out.wav --model my.nam --ir cab.wav     # offline render, latency compensated (--raw-levels: not normalised)
 $cli render guitar.wav out.wav --no-model --no-cab --pedals od --set od_drive=0.3,od_tone=0.6  # any knob, by id
-$cli info my.nam
+$cli info my.nam                                               # metadata, and the level it's normalised from
 $cli agent "Make it creamier" --provider anthropic             # the agent, with no window
 build/evil-snapshot_artefacts/Release/evil-snapshot shots/     # render the GUI to PNG, no window needed
 ```
@@ -273,10 +286,17 @@ The tests cover:
   exactly the reported latency at 44.1/48/96 kHz.
 - **DSP**: bit-exact pass-through with everything neutral, gate hysteresis and hold, EQ band
   gains, IR swaps without discontinuities.
+- **Normalised volume**: captures and IRs far apart in level, with and without the cabinet, all
+  coming out within 0.1 dB of the built-in capture, which sounds as it did; K-weighting and an
+  IR's gain against BS.1770 and a direct convolution; swapping captures without a jump, and turning
+  it on or off dipping out and back rather than overshooting.
 - **Drive pedals**: all three against numbers measured from captures of the real pedals (the captures
   themselves aren't in this repository), aliasing, and the same sound at any sample rate.
 - **Knobs and EQ**: pointers where the real pedals' would be, and every EQ fader giving its stated
   dB at its band, in any combination.
+- **Transposer**: the right interval for notes and chords; delay that follows the note (~3 ms on
+  average up the neck, ~7 ms on a low E) at 44.1/48/96 kHz; low-E power chords and high notes
+  coming through clean.
 - **Tuner**: pitch within a cent from E1 to E6 at 44.1 to 192 kHz, plucked strings without
   octave errors even with a weak fundamental, silence on hum and noise; note and tuning
   parsing, picking the octave, and saved tunings surviving a reload or a damaged file.
@@ -285,7 +305,12 @@ The tests cover:
   captured from Google. Sign-in by code without opening anything, staying signed in across restarts
   and other copies of the amp, the catalog over a real loopback socket with PKCE and a forged redirect
   refused, the HTTP client over a real local socket, downloads refusing unsafe URLs and names, the
-  level limits, revert, and closing the plugin mid-request without a deadlock.
+  level limits, revert, and closing the plugin mid-request without a deadlock. The tone meter
+  against the readings its prompt was written from, the cabinet switch following whatever capture
+  is loaded, and every file in a long pack being within reach.
+- **Saved tones**: a preset bringing its capture, IR and credit back with the originals gone, or
+  changed, and refusing to write anywhere but its own folder, whatever a preset from a stranger
+  says.
 - **CPU budget**: the chain stays under 25% of the deadline (skipped on CI runners, where
   timing is noisy).
 

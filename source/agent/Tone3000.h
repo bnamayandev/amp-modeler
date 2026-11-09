@@ -50,12 +50,18 @@ public:
   CatalogPick browseCatalog(const ShouldCancel &, int timeoutMs = 3 * 60 * 1000);
 
   juce::var getTone(juce::int64 toneId, juce::String &error);
-  /** A tone's files of both NAM generations, or its IRs. */
-  juce::var listModels(juce::int64 toneId, const juce::String &format,
-                       juce::String &error);
-  /** list: favorited, downloaded, created, trending or latest. */
+
+  struct FileList {
+    juce::Array<juce::var> files;
+    bool complete = true; // false if TONE3000 stopped sending them part-way
+  };
+  /** Every file of a tone, of both NAM generations, or its IRs. error is only set
+      if none came; a part of the list comes back as just that. */
+  FileList listModels(juce::int64 toneId, const juce::String &format, juce::String &error);
+  /** list: favorited, downloaded, created, trending or latest. total is how many
+      there are if that's more than comes back, for the lists that say. */
   juce::var listTones(const juce::String &list, const juce::String &gear,
-                      const juce::String &query, juce::String &error);
+                      const juce::String &query, juce::String &error, int *total = nullptr);
   /** Saves one file to the library, keeping who made it beside it, and returns
       it. A file already there isn't fetched again. */
   juce::File download(const juce::var &tone, const juce::var &model,
@@ -71,6 +77,9 @@ public:
   static void setLibraryDirectoryForTesting(const juce::File &);
   /** For a loaded model or IR: its TONE3000 credit, or empty if it isn't one. */
   static juce::String creditForSource(const juce::String &source);
+  /** The gear its TONE3000 page says it is ("amp-cab"), or empty if it isn't one
+      or was saved before that was kept. */
+  static juce::String gearForSource(const juce::String &source);
 
   // --- pure helpers, public for the tests ---
   struct Pkce {
@@ -111,6 +120,9 @@ private:
   bool storeTokens(const juce::var &tokenResponse);
   HttpResponse authenticated(HttpRequest);
   juce::var getJson(const juce::String &pathAndQuery, juce::String &error);
+  /** Adds a whole list, page by page, leaving out any file already seen. */
+  void collectModels(const juce::String &path, FileList &, juce::Array<juce::int64> &seen,
+                     juce::String &error);
 
   HttpClient &http;
   AgentSettings &settings;

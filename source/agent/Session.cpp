@@ -20,6 +20,75 @@ void merge(std::vector<Source> &into, const std::vector<Source> &more) {
       into.push_back(source);
   }
 }
+
+constexpr const char *wrapUpNote =
+    "You're almost out of steps for this message. Stop searching and adjusting, "
+    "and give your answer now about the amp as it's set.";
+
+/** One thing a turn did, kept so it can carry on in a fresh conversation. */
+struct WorkDone {
+  juce::String what;
+  juce::String result; // a tool's, as the model saw it; empty for anything else
+};
+
+/** The opening message of a fresh conversation that picks a turn up where it
+    got to. A search's pages can't be carried over, as they're the provider's,
+    but everything that came back from the amp and TONE3000 can. Without the
+    results it's much shorter, in case the length was what was turned down. */
+juce::String carryOn(const juce::String &playerMessage, const std::vector<WorkDone> &work,
+                     const std::vector<Source> &sources, const juce::String &why,
+                     int searchesLeft, bool withResults) {
+  constexpr int maxResultLength = 3000, maxResultsLength = 40000, maxSources = 15;
+
+  // The latest results matter most, so the length budget goes to them first.
+  std::vector<juce::String> results(work.size());
+  int budget = withResults ? maxResultsLength : 0;
+  for (size_t i = work.size(); i-- > 0;) {
+    auto result = work[i].result;
+    if (result.isEmpty() || budget <= 0)
+      continue;
+    if (result.length() > maxResultLength)
+      result = result.substring(0, maxResultLength) + " [...]";
+    budget -= result.length();
+    results[i] = result;
+  }
+
+  juce::String text;
+  text << "[Carrying on. Part-way through this message the provider turned down a "
+          "request (\""
+       << why
+       << "\"), so this is a fresh conversation. Everything you did for this message "
+          "so far is listed below and still stands: the amp is set as described at "
+          "the end. Pick up from there. Don't call reset_controls or start the tone "
+          "again, and don't repeat a tool call whose result is here. The pages your "
+          "searches found couldn't be carried over, only what you searched for and "
+          "what you cited, so search again only for something you still need. ";
+  if (searchesLeft > 0)
+    text << "You have " << searchesLeft << " web searches left for this message.";
+  else
+    text << "You have no web searches left for this message.";
+  text << "]\n\nThe player's message:\n" << playerMessage << "\n\n";
+
+  if (work.empty()) {
+    text << "You hadn't done anything for it yet.\n";
+  } else {
+    text << "What you've done for it so far, in order:\n";
+    for (size_t i = 0; i < work.size(); ++i) {
+      text << juce::String((int)i + 1) << ". " << work[i].what;
+      if (results[i].isNotEmpty())
+        text << " It returned: " << results[i];
+      else if (work[i].result.isNotEmpty())
+        text << " (Its result is left out, for length.)";
+      text << "\n";
+    }
+  }
+  if (!sources.empty()) {
+    text << "\nSources you cited:\n";
+    for (size_t i = 0; i < sources.size() && i < (size_t)maxSources; ++i)
+      text << "- " << sources[i].title << ": " << sources[i].url << "\n";
+  }
+  return text;
+}
 } // namespace
 
 Session::Session(AmpControl &a, AgentSettings &s, std::unique_ptr<HttpClient> client,
@@ -317,7 +386,11 @@ ModelReply Session::askWithRetries() {
   constexpr int waitsMs[] = {2000, 6000};
   ModelReply reply;
   for (int attempt = 0;; ++attempt) {
-    reply = provider->parseResponse(http->send(provider->buildRequest()));
+    const auto request = provider->buildRequest();
+    const auto response = http->send(request);
+    reply = provider->parseResponse(response);
+    if (reply.badRequest)
+      logTurnedDown(request, response);
     if (reply.error.isEmpty() || !reply.retryable || cancelled() ||
         attempt >= (int)std::size(waitsMs))
       return reply;
@@ -327,6 +400,24 @@ ModelReply Session::askWithRetries() {
       return reply;
     setStatus("thinking");
   }
+}
+
+void Session::logTurnedDown(const HttpRequest &request,
+                            const HttpResponse &response) const {
+  if (logger == nullptr)
+    return;
+  // The error says what was wrong; the end of the body is the part that was new.
+  constexpr int maxLength = 4000;
+  const auto apiKey = settings.getApiKey(activeProvider);
+  const auto tidy = [&apiKey](juce::String text) {
+    if (apiKey.isNotEmpty())
+      text = text.replace(apiKey, "[key]");
+    return text.replaceCharacters("\r\n", "  ");
+  };
+  logger("Agent request turned down: HTTP " + juce::String(response.status) + " " +
+         tidy(response.text().substring(0, maxLength)) +
+         " | the end of what was sent: " +
+         tidy(request.body.getLastCharacters(maxLength)));
 }
 
 void Session::runTurn(const juce::String &text) {
@@ -349,10 +440,11 @@ void Session::runTurn(const juce::String &text) {
     tools.allowSignInPrompt();
   const bool fresh = provider == nullptr || !threadIsSound || activeProvider != id ||
                      activeModel != settings.getModel(id) || newChatStarted;
+  const auto earlier = earlierConversation(); // before this turn adds to the chat
   juce::String message;
   if (fresh) {
     prepareProvider(id, apiKey);
-    message << earlierConversation();
+    message << earlier;
   }
   message << text << "\n\n" << describeAmpState(amp);
   provider->addUserMessage(message);
@@ -360,7 +452,8 @@ void Session::runTurn(const juce::String &text) {
   const std::shared_ptr<const juce::XmlElement> before = amp.captureState();
   bool changedAmp = false, finished = false;
   std::vector<Source> sources, suggestions;
-  int inputTokens = 0, outputTokens = 0, searches = 0;
+  std::vector<WorkDone> work;
+  int inputTokens = 0, outputTokens = 0, searches = 0, freshStarts = 0;
   provider->allowSearching();
   threadIsSound = false; // until this turn gets all the way through
 
@@ -376,6 +469,26 @@ void Session::runTurn(const juce::String &text) {
     const auto reply = askWithRetries();
     if (cancelled())
       break;
+    if (reply.error.isNotEmpty() && reply.badRequest &&
+        freshStarts < maxFreshStartsPerTurn) {
+      // Whatever it objected to is in that conversation, so leave it behind and
+      // carry on in a new one with the work so far, rather than stop half-done.
+      ++freshStarts;
+      note(reply.error + " Carrying on from where it got to, in a fresh conversation",
+           {});
+      prepareProvider(id, apiKey);
+      threadIsSound = false;
+      auto restart = earlier + carryOn(text, work, sources, reply.error,
+                                       juce::jmax(0, maxSearchesPerTurn - searches),
+                                       freshStarts == 1);
+      if (step >= maxStepsPerTurn - wrapUpSteps) // as it would be on a tool result
+        restart << "\n" << wrapUpNote << "\n";
+      provider->addUserMessage(restart + "\n" + describeAmpState(amp));
+      if (searches >= maxSearchesPerTurn)
+        provider->stopSearching();
+      setStatus("thinking");
+      continue;
+    }
     if (reply.error.isNotEmpty()) {
       problem(reply.error);
       break;
@@ -385,8 +498,10 @@ void Session::runTurn(const juce::String &text) {
     outputTokens += reply.outputTokens;
     merge(sources, reply.sources);
     merge(suggestions, reply.searchSuggestions);
-    for (const auto &query : reply.searchQueries)
+    for (const auto &query : reply.searchQueries) {
       note("searched the web: " + query, {});
+      work.push_back({"You searched the web for: " + query, {}});
+    }
     searches += reply.searchQueries.size();
     if (searches >= maxSearchesPerTurn)
       provider->stopSearching();
@@ -416,6 +531,7 @@ void Session::runTurn(const juce::String &text) {
       break;
     }
     if (words.isNotEmpty()) { // said something on the way to its next step
+      work.push_back({"You told the player: " + words, {}});
       Entry entry;
       entry.kind = Entry::Kind::assistant;
       entry.text = words;
@@ -433,6 +549,9 @@ void Session::runTurn(const juce::String &text) {
         signInCode = {}; // if it asked for one, it's over by now
       }
       changedAmp = changedAmp || outcome.changedAmp;
+      work.push_back({"You called " + call.name + " with " +
+                          juce::JSON::toString(call.arguments, true) + ".",
+                      outcome.result.content});
       results.push_back(std::move(outcome.result));
     }
     if (cancelled())
@@ -441,10 +560,7 @@ void Session::runTurn(const juce::String &text) {
       // Better a good answer about what's set than nothing at all.
       auto last = juce::JSON::parse(results.back().content);
       if (auto *object = last.getDynamicObject()) {
-        object->setProperty("note_from_the_amp",
-                            "You're almost out of steps for this message. Stop searching "
-                            "and adjusting, and give your answer now about the amp as "
-                            "it's set.");
+        object->setProperty("note_from_the_amp", wrapUpNote);
         results.back().content = juce::JSON::toString(last, true);
       }
     }
@@ -464,7 +580,11 @@ void Session::runTurn(const juce::String &text) {
     add(std::move(entry));
   }
 
-  std::lock_guard lock(mutex);
-  lastUsage = shortCount(inputTokens) + " tokens in, " + shortCount(outputTokens) + " out";
+  {
+    std::lock_guard lock(mutex);
+    lastUsage = shortCount(inputTokens) + " tokens in, " + shortCount(outputTokens) + " out";
+  }
+  if (finished && onAnswered != nullptr)
+    onAnswered();
 }
 } // namespace evil::agent

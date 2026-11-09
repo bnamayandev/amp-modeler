@@ -1,6 +1,7 @@
 #include "CabSim.h"
 
 #include "EvilBinaryData.h"
+#include "Loudness.h"
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
@@ -134,12 +135,58 @@ bool CabSim::load(const juce::String &newSource, juce::String &error) {
   }
   ir.applyGain((float)(1.0 / std::sqrt(energy)));
 
-  convolution.loadImpulseResponse(
-      std::move(ir), reader->sampleRate, juce::dsp::Convolution::Stereo::no,
-      juce::dsp::Convolution::Trim::yes, juce::dsp::Convolution::Normalise::no);
+  irAtLevelRate = loudness::atRate(ir.getReadPointer(0), length, reader->sampleRate);
+  unitIr = std::move(ir);
+  irRate = reader->sampleRate;
+  install(true);
   source = newSource;
   displayName = name;
   return true;
+}
+
+void CabSim::install(bool evenIfUnchanged) {
+  if (unitIr.getNumSamples() == 0)
+    return; // nothing loaded yet: the level is worked out when something is
+
+  float gainDb = 0.0f;
+  if (matching) {
+    const auto &reference = levelReference != nullptr
+                                ? *levelReference
+                                : loudness::weightedReferenceGuitar();
+    gainDb = (float)std::clamp(-loudness::gainThroughDb(reference, irAtLevelRate),
+                               -loudness::maxCorrectionDb, loudness::maxCorrectionDb);
+  }
+  // A new copy of the IR crossfades in, so only for a change worth hearing.
+  if (!evenIfUnchanged && std::abs(gainDb - matchGainDb) < 0.05f)
+    return;
+  matchGainDb = gainDb;
+
+  auto scaled = unitIr;
+  if (!juce::exactlyEqual(gainDb, 0.0f))
+    scaled.applyGain(juce::Decibels::decibelsToGain(gainDb));
+  convolution.loadImpulseResponse(
+      std::move(scaled), irRate, juce::dsp::Convolution::Stereo::no,
+      juce::dsp::Convolution::Trim::yes, juce::dsp::Convolution::Normalise::no);
+}
+
+void CabSim::setMatchingLevels(bool shouldMatch) {
+  std::lock_guard lock(loadMutex);
+  if (matching == shouldMatch)
+    return;
+  matching = shouldMatch;
+  install(false);
+}
+
+void CabSim::setLevelReference(std::shared_ptr<const std::vector<float>> weightedSignal) {
+  std::lock_guard lock(loadMutex);
+  levelReference = std::move(weightedSignal);
+  if (matching)
+    install(false);
+}
+
+float CabSim::getMatchGainDb() const {
+  std::lock_guard lock(loadMutex);
+  return matchGainDb;
 }
 
 juce::String CabSim::getSource() const {

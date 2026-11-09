@@ -3,10 +3,104 @@
 #include "EvilBinaryData.h"
 #include "Parameters.h"
 
+#include <juce_cryptography/juce_cryptography.h>
+
 namespace evil {
 namespace {
 constexpr const char *presetTag = "Preset";
 constexpr const char *paramTag = "Param";
+constexpr const char *fileTag = "File";
+// Far past any real capture or IR, which are under a megabyte or so. A preset this
+// big would stall the message thread every time it was picked.
+constexpr juce::int64 maxCarriedBytes = 64 * 1024 * 1024;
+
+juce::File userPresetDirectoryOverride;
+
+bool isModelRole(const juce::String &role) { return role == "model"; }
+
+/** Copies a preset's file into it. Empty if that went fine or there's nothing to
+    carry, as a built-in comes with the amp; otherwise why not. */
+juce::String carryFile(juce::XmlElement &preset, const char *role) {
+  const auto source = preset.getStringAttribute(role);
+  if (!juce::File::isAbsolutePath(source))
+    return {};
+  const juce::File file(source);
+  const juce::String what = isModelRole(role) ? "capture" : "IR";
+  juce::MemoryBlock data;
+  if (!file.existsAsFile())
+    return what + " (" + file.getFileName() + " is no longer there)";
+  if (file.getSize() > maxCarriedBytes)
+    return what + " (" + file.getFileName() + " is too big)";
+  if (!file.loadFileAsData(data) || data.isEmpty())
+    return what + " (" + file.getFileName() + " couldn't be read)";
+
+  auto *carried = preset.createNewChildElement(fileTag);
+  carried->setAttribute("for", role);
+  carried->setAttribute("name", file.getFileName());
+  const auto attribution = file.getSiblingFile(PresetManager::attributionFileName);
+  if (attribution.existsAsFile())
+    carried->setAttribute("attribution", attribution.loadFileAsString());
+  carried->addTextElement(juce::Base64::toBase64(data.getData(), data.getSize()));
+  return {};
+}
+
+/** A carried file's name, made safe, since a preset can come from anyone. Empty
+    if it isn't the kind of file this role loads. */
+juce::String carriedFileName(const juce::XmlElement &carried, const juce::String &role) {
+  const auto name =
+      juce::File::createLegalFileName(carried.getStringAttribute("name")).trim();
+  const auto extension =
+      name.fromLastOccurrenceOf(".", true, false).toLowerCase();
+  const juce::StringArray allowed =
+      isModelRole(role) ? juce::StringArray{".nam"}
+                        : juce::StringArray{".wav", ".aif", ".aiff", ".flac"};
+  if (!allowed.contains(extension))
+    return {};
+  // Kept to a length any filesystem takes, and always with its extension.
+  return name.dropLastCharacters(extension.length()).substring(0, 80).trim() + extension;
+}
+
+/** Points the preset at its carried files, putting them back on disk if the
+    originals aren't there as they were. Where they go is named by what's in them,
+    so nothing in a preset chooses a path and the same file is only kept once. If
+    one is damaged, the preset is left to try the original path as before. */
+void restoreCarriedFiles(juce::XmlElement &preset) {
+  for (auto *carried : preset.getChildWithTagNameIterator(fileTag)) {
+    const auto role = carried->getStringAttribute("for");
+    if (!isModelRole(role) && role != "ir")
+      continue;
+    const auto name = carriedFileName(*carried, role);
+    juce::MemoryOutputStream decoded;
+    if (name.isEmpty() || !juce::Base64::convertFromBase64(
+                              decoded, carried->getAllSubText().removeCharacters(" \t\r\n")))
+      continue;
+    const juce::MemoryBlock data(decoded.getData(), decoded.getDataSize());
+    if (data.isEmpty())
+      continue;
+
+    const auto source = preset.getStringAttribute(role);
+    if (juce::File::isAbsolutePath(source)) {
+      const juce::File original(source);
+      juce::MemoryBlock existing;
+      if (original.getSize() == (juce::int64)data.getSize() &&
+          original.loadFileAsData(existing) && existing == data)
+        continue; // still there, and where its credit is
+    }
+
+    const auto dir = PresetManager::getSavedFilesDirectory().getChildFile(
+        juce::SHA256(data.getData(), data.getSize()).toHexString().substring(0, 32));
+    const auto file = dir.getChildFile(name);
+    if (!dir.createDirectory())
+      continue;
+    if (file.getSize() != (juce::int64)data.getSize() &&
+        !file.replaceWithData(data.getData(), data.getSize()))
+      continue;
+    const auto attribution = carried->getStringAttribute("attribution").substring(0, 4000);
+    if (attribution.isNotEmpty())
+      dir.getChildFile(PresetManager::attributionFileName).replaceWithText(attribution);
+    preset.setAttribute(role, file.getFullPathName());
+  }
+}
 } // namespace
 
 PresetManager::PresetManager(juce::AudioProcessorValueTreeState &s,
@@ -24,10 +118,20 @@ PresetManager::PresetManager(juce::AudioProcessorValueTreeState &s,
 }
 
 juce::File PresetManager::getUserPresetDirectory() {
+  if (userPresetDirectoryOverride != juce::File())
+    return userPresetDirectoryOverride;
   return juce::File::getSpecialLocation(
              juce::File::userApplicationDataDirectory)
       .getChildFile("EvilAmplifier")
       .getChildFile("Presets");
+}
+
+juce::File PresetManager::getSavedFilesDirectory() {
+  return getUserPresetDirectory().getChildFile("Files");
+}
+
+void PresetManager::setUserPresetDirectoryForTesting(const juce::File &dir) {
+  userPresetDirectoryOverride = dir;
 }
 
 void PresetManager::refreshUserPresets() {
@@ -65,6 +169,7 @@ bool PresetManager::load(int index) {
   const auto xml = juce::parseXML(userFiles[userIndex]);
   if (xml == nullptr || !xml->hasTagName(presetTag))
     return false;
+  restoreCarriedFiles(*xml);
   apply(*xml);
   currentIndex = index;
   return true;
@@ -108,8 +213,8 @@ void PresetManager::apply(const juce::XmlElement &saved) {
       {preset.getStringAttribute("model"), preset.getStringAttribute("ir")});
 }
 
-bool PresetManager::saveUserPreset(const juce::String &rawName,
-                                   juce::String &error) {
+bool PresetManager::saveUserPreset(const juce::String &rawName, juce::String &error,
+                                   juce::String *warning) {
   const auto name = juce::File::createLegalFileName(rawName.trim());
   if (name.isEmpty()) {
     error = "Enter a preset name";
@@ -121,10 +226,19 @@ bool PresetManager::saveUserPreset(const juce::String &rawName,
     return false;
   }
   const auto file = dir.getChildFile(name + fileExtension);
-  if (!capture(name)->writeTo(file)) {
+  const auto preset = capture(name);
+  juce::StringArray left;
+  for (const auto *role : {"model", "ir"})
+    if (const auto why = carryFile(*preset, role); why.isNotEmpty())
+      left.add(why);
+  if (!preset->writeTo(file)) {
     error = "Could not write " + file.getFullPathName();
     return false;
   }
+  // The settings are still worth keeping, and the file may be back.
+  if (warning != nullptr && !left.isEmpty())
+    *warning = "It doesn't carry its " + left.joinIntoString(" or its ") +
+               ", so it only sounds right where that file can be found.";
   refreshUserPresets();
   currentIndex = factory.size() + userFiles.indexOf(file);
   return true;

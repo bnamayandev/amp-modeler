@@ -81,7 +81,9 @@ target_sources(evil_core INTERFACE
     source/agent/Tone3000.cpp
     source/agent/Tools.cpp
     source/dsp/CabSim.cpp
+    source/dsp/Chime.cpp
     source/dsp/Metronome.cpp
+    source/dsp/Loudness.cpp
     source/dsp/ModelManager.cpp
     source/dsp/NamModelRunner.cpp
     source/dsp/Pedals.cpp

@@ -3,6 +3,12 @@
 #include <algorithm>
 
 namespace evil {
+SignalChain::SignalChain() {
+  models.onModelChanging = [this](std::shared_ptr<const std::vector<float>> output) {
+    cab.setLevelReference(std::move(output));
+  };
+}
+
 void SignalChain::prepare(double sampleRate, int maxBlockSize) {
   maxBlock = maxBlockSize;
   inputGain.reset(sampleRate, 0.02);

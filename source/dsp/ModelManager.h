@@ -7,6 +7,8 @@
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <thread>
 
@@ -64,6 +66,18 @@ public:
    * alias. */
   void process(const float *in, float *out, int n) noexcept;
 
+  /** Plays every model at loudness::targetDb, by the level measured as it loaded,
+      instead of at whatever level it was captured at. Switching dips the output
+      to nothing for a moment, long enough for an IR rescaled to suit to swap in
+      behind it, so the level never overshoots on the way. */
+  void setMatchingLevels(bool shouldMatch) noexcept { matching = shouldMatch; }
+  bool isMatchingLevels() const noexcept { return matching.load(); }
+
+  /** Called with the reference output of the model about to play (null for none),
+      just before the audio thread is handed it, so an IR can be matched to it. On
+      the loading thread, one call at a time. Set once, before the first load. */
+  std::function<void(std::shared_ptr<const std::vector<float>>)> onModelChanging;
+
   /** Latency of the model currently playing; written by the audio thread. */
   int getActiveLatencySamples() const noexcept {
     return activeLatency.load(std::memory_order_relaxed);
@@ -92,6 +106,8 @@ private:
   void pickUpPending() noexcept;
   void render(NamModelRunner *runner, const float *in, float *out,
               int n) noexcept;
+  /** Applies the dip while matching is switched, and switches it at the bottom. */
+  void switchMatching(float *out, int n) noexcept;
   bool retire(NamModelRunner *runner) noexcept;
 
   // Handover: the loader stores, the audio thread exchanges. unloadToken means
@@ -109,6 +125,12 @@ private:
   int fadePosition = 0, fadeLength = 2048;
   std::vector<float> inputCopy, fadeBuffer;
   std::atomic<int> activeLatency{0};
+  std::atomic<bool> matching{false};
+  bool matchingApplied = false;
+  enum class Switching { no, fadingOut, holding, fadingIn };
+  Switching switching = Switching::no;
+  float switchGain = 1.0f;
+  int holdLeft = 0, holdLength = 7200;
 
   // Retired runners, audio thread -> message thread.
   juce::AbstractFifo trashFifo{32};

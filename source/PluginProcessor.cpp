@@ -34,9 +34,13 @@ EvilAmplifierProcessor::EvilAmplifierProcessor()
       agentSession(agentAmp, agentSettings.get(),
                    std::make_unique<agent::WebHttpClient>()) {
   agentSession.setLogger([this](const juce::String &line) { log(line); });
+  agentSession.setOnAnswered([this] { chime.trigger(); });
   if (wrapperType == wrapperType_Standalone)
     standalone::prepareAudioDevices(); // the audio device opens after this
   ModelManager::enableFastTanh(); // before any model is built
+  // Before anything loads, so each is measured to its level just the once.
+  chain.setMatchingLevels(appSettings->isNormalisingVolume());
+  appSettings->addChangeListener(this);
   juce::String error;
   if (!chain.getCab().load(params::defaultIrSource, error))
     log("Default IR failed to load: " + error);
@@ -47,6 +51,7 @@ EvilAmplifierProcessor::EvilAmplifierProcessor()
 
 EvilAmplifierProcessor::~EvilAmplifierProcessor() {
   stopTimer();
+  appSettings->removeChangeListener(this);
   getModels().removeChangeListener(this);
 }
 
@@ -68,6 +73,7 @@ void EvilAmplifierProcessor::prepareToPlay(double sampleRate,
   const int maxBlock = juce::jmax(1, samplesPerBlock);
   chain.prepare(sampleRate, maxBlock);
   metronome.prepare(sampleRate);
+  chime.prepare(sampleRate);
 
   bypassDelay.setSize(2, bypassDelayCapacity);
   bypassDelay.clear();
@@ -129,6 +135,7 @@ void EvilAmplifierProcessor::processBlock(juce::AudioBuffer<float> &buffer,
   chain.process(mono, n, snapshot.read());
   analyserTap.push(mono, n);
   metronome.process(mono, n, snapshot.readMetronome(metronomeRunning.load()));
+  chime.process(&mono, 1, n);
 
   // Never pass non-finite samples to the host (or to someone's ears).
   for (int i = 0; i < n; ++i)
@@ -178,6 +185,7 @@ void EvilAmplifierProcessor::processBlockBypassed(
         dst[i] = ring[(readStart + i) & (bypassDelayCapacity - 1)];
     }
   }
+  chime.process(buffer.getArrayOfWritePointers(), numOut, n);
 }
 
 juce::AudioProcessorEditor *EvilAmplifierProcessor::createEditor() {
@@ -318,7 +326,16 @@ void EvilAmplifierProcessor::timerCallback() {
            : juce::String()));
 }
 
-void EvilAmplifierProcessor::changeListenerCallback(juce::ChangeBroadcaster *) {
+void EvilAmplifierProcessor::changeListenerCallback(juce::ChangeBroadcaster *source) {
+  if (source == &appSettings.get()) {
+    const bool normalise = appSettings->isNormalisingVolume();
+    if (normalise != chain.isMatchingLevels()) {
+      chain.setMatchingLevels(normalise);
+      log(normalise ? "Normalising the volume of captures and IRs"
+                    : "Playing captures and IRs at their own volume");
+    }
+    return;
+  }
   const auto status = getModels().getStatus();
   if (status.state == ModelManager::State::ready &&
       status.info.source != lastLoggedModelSource) {

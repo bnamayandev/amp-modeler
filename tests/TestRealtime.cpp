@@ -23,6 +23,7 @@ TEST_CASE("The audio path never allocates or frees, even while models, IRs "
 
   constexpr int block = 128;
   SignalChain chain;
+  chain.setMatchingLevels(true); // as the plugin starts
   chain.prepare(48000.0, block);
   juce::String error;
   REQUIRE(chain.getCab().load("builtin:EvilCab4x12", error));
@@ -50,6 +51,8 @@ TEST_CASE("The audio path never allocates or frees, even while models, IRs "
           error));
     if (b % 900 == 450)
       chain.getModels().requestUnload();
+    if (b % 1100 == 550) // the volume normalised, or not
+      chain.setMatchingLevels(!chain.isMatchingLevels());
     if (b % 300 == 0) {
       s.cabOn = random.nextBool();
       s.gateOn = random.nextBool();

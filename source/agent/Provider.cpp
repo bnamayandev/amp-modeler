@@ -51,6 +51,7 @@ ModelReply failure(const juce::String &who, const juce::String &apiKey,
   // Google reports a bad key as a 400.
   const bool badKey = status == 401 || status == 403 ||
                       response.text().contains("API_KEY_INVALID");
+  reply.badRequest = !badKey && (status == 400 || status == 413 || status == 422);
   if (status == 0)
     reply.error = "Couldn't reach " + who + ": " + response.error + ".";
   else if (badKey)

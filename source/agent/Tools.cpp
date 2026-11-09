@@ -4,6 +4,8 @@
 #include "dsp/ModelManager.h"
 #include "state/Parameters.h"
 
+#include <algorithm>
+
 namespace evil::agent {
 namespace {
 juce::var stringProperty(const char *description) {
@@ -34,6 +36,24 @@ bool canBeTheAmp(const juce::String &gear) {
 
 bool includesCab(const juce::String &gear) {
   return gear == "amp-cab" || gear == "full-rig";
+}
+
+/** Whether the capture has a cabinet in it, if anything says. The file is asked
+    first, as one TONE3000 page can hold both heads and amps with cabinets. */
+std::optional<bool> hasOwnCabinet(const LoadedCapture &capture) {
+  if (capture.source.isEmpty())
+    return {}; // nothing playing yet
+  if (capture.source.startsWith(ModelManager::builtinPrefix))
+    return false; // the ones that ship are all heads
+  const auto gear = (capture.gearType.isNotEmpty() ? capture.gearType
+                                                   : Tone3000::gearForSource(capture.source))
+                        .toLowerCase()
+                        .replaceCharacter('_', '-');
+  if (includesCab(gear) || gear == "amp-pedal-cab")
+    return true;
+  if (gear == "amp" || gear == "pedal-amp" || gear == "preamp" || gear == "pedal")
+    return false;
+  return {};
 }
 
 juce::String formatDb(float db) { return juce::String(db, 1) + " dB"; }
@@ -73,15 +93,17 @@ std::vector<ToolSpec> ToolBox::specs() {
               {"changes"})},
       {"reset_controls",
        "Put every pedal off, every knob back to its starting position and the EQ flat, "
-       "leaving the loaded capture, the cabinet IR and the output level alone. Do this "
-       "first when starting on a new tone, or whatever was set for the last one "
-       "stays in the sound.",
+       "leaving the loaded capture, the cabinet IR and the output level alone. The "
+       "cabinet switch goes to what the loaded capture needs. Do this first when "
+       "starting on a new tone, or whatever was set for the last one stays in the "
+       "sound.",
        schema({}, {})},
       {"measure_tone",
        "Measure the sound as it's now set, as you can't hear it. Plays a test guitar "
        "through a copy of the amp, leaving the live sound alone, and reports its "
        "spectrum, how hard it distorts and how much it compresses, each with the same "
-       "for the capture alone to compare. Modulation, delay and reverb are left out. "
+       "with the pedals and EQ out of it to compare. Modulation, delay and reverb are "
+       "left out. "
        "Use it after setting up a tone, and fix what doesn't fit what you're after.",
        schema({}, {})},
       {"load_builtin",
@@ -106,15 +128,24 @@ std::vector<ToolSpec> ToolBox::specs() {
               {"list"})},
       {"inspect_tone3000_tone",
        "See one TONE3000 tone and its files: what was captured, by whom, and the "
-       "variants available (often several gain settings).",
+       "variants available (often several gain settings). A long pack comes a page at "
+       "a time, and says how many files it has.",
        schema({{"tone", stringProperty("The tone's page URL, or the number at the "
-                                       "end of it")}},
+                                       "end of it")},
+               {"name_contains",
+                stringProperty("Optional: only files with all of these words in their "
+                               "name, as \"V4 Bright\". For a pack too long to read "
+                               "through.")},
+               {"skip",
+                json::object({{"type", "integer"},
+                              {"description", "Optional: how many files to skip, to "
+                                              "see the next ones in a long pack."}})}},
               {"tone"})},
       {"load_tone3000_capture",
        "Download one file of a TONE3000 tone and load it. A NAM amp or amp-and-cab "
        "capture becomes the amp, and the cabinet switches to suit it. An IR becomes "
-       "the cabinet. The output level is trimmed so the new capture isn't a jump in "
-       "volume.",
+       "the cabinet, unless the capture playing has its own. The output level is trimmed "
+       "so the new capture isn't a jump in volume.",
        schema({{"tone", stringProperty("The tone's page URL or number")},
                {"model_id",
                 json::object({{"type", "integer"},
@@ -262,6 +293,16 @@ ToolBox::Outcome ToolBox::setParameters(const ToolCall &call) {
     }
     if (why.isNotEmpty())
       entry.getDynamicObject()->setProperty("limited", why);
+    if (id == params::cabOn) {
+      // It might be what's wanted, as the tags on a capture can be wrong.
+      const auto own = hasOwnCabinet(amp.getModel());
+      if (own.has_value() && (value >= 0.5f) == *own)
+        entry.getDynamicObject()->setProperty(
+            "warning", *own ? "This capture has its own cabinet, so that's two cabinets: "
+                              "a thin, hollow, boxy sound."
+                            : "This capture is a head, so that leaves no cabinet at all: "
+                              "a harsh, fizzy sound.");
+    }
     applied.append(entry);
     if (after.has_value())
       described.add(after->name + " " + after->text);
@@ -282,10 +323,19 @@ ToolBox::Outcome ToolBox::setParameters(const ToolCall &call) {
 ToolBox::Outcome ToolBox::resetControls(const ToolCall &call) {
   bool changed = false;
   for (const auto &p : amp.getParameters())
-    if (p.id != params::output && !juce::approximatelyEqual(p.value, p.defaultValue))
+    if (p.id != params::output && p.id != params::cabOn &&
+        !juce::approximatelyEqual(p.value, p.defaultValue))
       changed = amp.setParameter(p.id, p.defaultValue) || changed;
+  // The cabinet goes with the capture, not the last tone. With no telling what the
+  // capture needs, it stays as the player has it.
+  if (const auto own = hasOwnCabinet(amp.getModel()); own.has_value())
+    changed = setCabinetOn(!*own) || changed;
   note("cleared the pedals and EQ, to start from the capture alone", {});
-  auto outcome = reply(call, json::object({{"reset", true}}));
+
+  auto result = json::object({{"reset", true}});
+  if (const auto cabinet = findParameter(params::cabOn))
+    result.getDynamicObject()->setProperty("cabinet_on", cabinet->value >= 0.5f);
+  auto outcome = reply(call, result);
   outcome.changedAmp = changed;
   return outcome;
 }
@@ -299,35 +349,59 @@ ToolBox::Outcome ToolBox::measureTone(const ToolCall &call) {
   auto bands = json::object(), changes = json::object();
   for (size_t b = 0; b < reading.bandDb.size(); ++b) {
     const auto label = params::eqBandLabel(b);
-    bands.getDynamicObject()->setProperty(label, oneDecimal(reading.bandDb[b]));
+    // null says there's next to nothing there, which is true and can't be misread.
+    bands.getDynamicObject()->setProperty(label, reading.bandDb[b] < ToneReading::emptyBandDb
+                                                     ? juce::var()
+                                                     : juce::var(oneDecimal(reading.bandDb[b])));
+    const auto change = reading.bandChangeDb(b);
     changes.getDynamicObject()->setProperty(
-        label, oneDecimal(reading.bandDb[b] - reading.bandDbCaptureAlone[b]));
+        label, change.has_value() ? juce::var(oneDecimal(*change)) : juce::var());
   }
   note("measured the tone: " + juce::String(juce::roundToInt(reading.distortionHardPercent)) +
            "% distortion picked hard, " + juce::String(oneDecimal(reading.touchDb)) +
            " dB of touch response",
        {});
-  return reply(
-      call,
-      json::object(
-          {{"level_db", oneDecimal(reading.levelDb)},
-           {"level_change_from_capture_alone_db",
-            oneDecimal(reading.levelDb - reading.levelDbCaptureAlone)},
-           {"spectrum_db_by_eq_band", bands},
-           {"spectrum_change_from_capture_alone_db", changes},
-           {"touch_db", oneDecimal(reading.touchDb)},
-           {"touch_db_capture_alone", oneDecimal(reading.touchDbCaptureAlone)},
-           {"distortion_percent_picked_gently", oneDecimal(reading.distortionLightPercent)},
-           {"distortion_percent_picked_hard", oneDecimal(reading.distortionHardPercent)},
-           {"distortion_percent_picked_gently_capture_alone",
-            oneDecimal(reading.distortionLightCaptureAlone)},
-           {"distortion_percent_picked_hard_capture_alone",
-            oneDecimal(reading.distortionHardCaptureAlone)}}));
+  auto result = json::object(
+      {{"level_db", oneDecimal(reading.levelDb)},
+       {"level_change_from_capture_alone_db",
+        oneDecimal(reading.levelDb - reading.levelDbCaptureAlone)},
+       {"spectrum_db_by_eq_band", bands},
+       {"spectrum_change_from_capture_alone_db", changes},
+       {"touch_db", oneDecimal(reading.touchDb)},
+       {"touch_db_capture_alone", oneDecimal(reading.touchDbCaptureAlone)},
+       {"distortion_percent_picked_gently", oneDecimal(reading.distortionLightPercent)},
+       {"distortion_percent_picked_hard", oneDecimal(reading.distortionHardPercent)},
+       {"distortion_percent_picked_gently_capture_alone",
+        oneDecimal(reading.distortionLightCaptureAlone)},
+       {"distortion_percent_picked_hard_capture_alone",
+        oneDecimal(reading.distortionHardCaptureAlone)}});
+  if (const auto output = findParameter(params::output))
+    result.getDynamicObject()->setProperty("output_db", oneDecimal(output->value));
+  return reply(call, result);
 }
 
 bool ToolBox::setOutput(float db) {
   const auto p = findParameter(params::output);
   return p.has_value() && amp.setParameter(params::output, juce::jlimit(p->min, p->max, db));
+}
+
+bool ToolBox::setCabinetOn(bool on) {
+  const auto p = findParameter(params::cabOn);
+  if (!p.has_value() || (p->value >= 0.5f) == on)
+    return false;
+  return amp.setParameter(params::cabOn, on ? 1.0f : 0.0f);
+}
+
+bool ToolBox::switchCabinetForNewIr(juce::var &result) {
+  const bool plays = !hasOwnCabinet(amp.getModel()).value_or(false);
+  setCabinetOn(plays);
+  result.getDynamicObject()->setProperty("cabinet_on", plays);
+  if (!plays)
+    result.getDynamicObject()->setProperty(
+        "why_the_cabinet_is_off",
+        "The capture playing has its own cabinet, so this IR stays off rather than "
+        "making two. It plays as soon as a head is loaded.");
+  return plays;
 }
 
 juce::String ToolBox::swapModel(const std::function<juce::String()> &load) {
@@ -353,7 +427,7 @@ juce::String ToolBox::swapModel(const std::function<juce::String()> &load) {
 ToolBox::Outcome ToolBox::loadBuiltin(const ToolCall &call) {
   const auto kind = call.arguments["kind"].toString();
   const auto name = call.arguments["name"].toString();
-  ToolBox::Outcome outcome;
+  auto result = json::object({{"loaded", name}});
 
   if (kind == "model") {
     if (name == "none") {
@@ -372,6 +446,9 @@ ToolBox::Outcome ToolBox::loadBuiltin(const ToolCall &call) {
         return problem(call, error);
       note("loaded the built-in " + name + " model", {});
     }
+    // No capture with a cabinet of its own is playing now, so one has to be on.
+    setCabinetOn(true);
+    result.getDynamicObject()->setProperty("cabinet_on", true);
   } else if (kind == "ir") {
     if (!amp.getBuiltinIrs().contains(name))
       return problem(call, "No built-in IR called " + name + ". There are: " +
@@ -379,11 +456,13 @@ ToolBox::Outcome ToolBox::loadBuiltin(const ToolCall &call) {
     const auto error = amp.loadIr(CabSim::builtinPrefix + name);
     if (error.isNotEmpty())
       return problem(call, error);
-    note("loaded the built-in " + name + " cabinet", {});
+    note("loaded the built-in " + name + " cabinet" +
+             (switchCabinetForNewIr(result) ? "" : ", left off since the capture has its own"),
+         {});
   } else {
     return problem(call, "kind has to be model or ir.");
   }
-  outcome = reply(call, json::object({{"loaded", name}}));
+  auto outcome = reply(call, result);
   outcome.changedAmp = true;
   return outcome;
 }
@@ -417,8 +496,9 @@ ToolBox::Outcome ToolBox::listTones(const ToolCall &call) {
   if (const auto notReady = ensureConnected(); notReady.isNotEmpty())
     return problem(call, notReady);
   juce::String error;
+  int total = 0;
   const auto tones = tone3000.listTones(list, call.arguments["gear"].toString(),
-                                        call.arguments["query"].toString(), error);
+                                        call.arguments["query"].toString(), error, &total);
   if (error.isNotEmpty())
     return problem(call, error);
 
@@ -429,7 +509,12 @@ ToolBox::Outcome ToolBox::listTones(const ToolCall &call) {
                                {"gear", tone["gear"]},
                                {"format", tone["format"]}}));
   note("read your TONE3000 " + list + " list", {});
-  return reply(call, json::object({{"tones", found}}));
+  auto result = json::object({{"tones", found}});
+  if (total > found.size())
+    result.getDynamicObject()->setProperty(
+        "more_tones", "Showing " + juce::String(found.size()) + " of " + juce::String(total) +
+                          ". Narrow them down with query.");
+  return reply(call, result);
 }
 
 ToolBox::Outcome ToolBox::inspectTone(const ToolCall &call) {
@@ -444,41 +529,62 @@ ToolBox::Outcome ToolBox::inspectTone(const ToolCall &call) {
   if (error.isNotEmpty() || !tone.isObject())
     return problem(call, error.isNotEmpty() ? error : "TONE3000 sent nothing for this tone.");
   const auto format = tone["format"].toString();
-  const auto models = tone3000.listModels(toneId, format, error);
+  const auto list = tone3000.listModels(toneId, format, error);
   if (error.isNotEmpty())
     return problem(call, error);
 
+  // Some packs have hundreds, and the setting that's wanted can be any of them. So
+  // it's a page at a time, always saying how many there are and how to get at them.
+  constexpr int maxFiles = 40;
+  const auto wanted =
+      juce::StringArray::fromTokens(call.arguments["name_contains"].toString(), false);
+  const int skip = juce::jmax(0, (int)call.arguments["skip"]);
   auto files = json::array();
-  constexpr int maxFiles = 40; // some packs have hundreds
-  for (const auto &model : json::items(models)) {
-    if (files.getArray()->size() >= maxFiles)
-      break;
-    files.append(json::object({{"id", model["id"]},
-                               {"name", model["name"]},
-                               {"size", model["size"]},
-                               {"architecture", model["architecture_version"]}}));
+  int matching = 0;
+  for (const auto &model : list.files) {
+    const auto name = model["name"].toString();
+    if (!std::all_of(wanted.begin(), wanted.end(), [&name](const juce::String &word) {
+          return name.containsIgnoreCase(word);
+        }))
+      continue;
+    if (matching++ >= skip && files.size() < maxFiles)
+      files.append(json::object({{"id", model["id"]},
+                                 {"name", model["name"]},
+                                 {"size", model["size"]},
+                                 {"architecture", model["architecture_version"]}}));
   }
 
   note("looked at " + Tone3000::credit(tone), {{"on TONE3000", Tone3000::pageUrl(tone)}});
-  return reply(
-      call,
-      json::object(
-          {{"id", toneId},
-           {"title", tone["title"]},
-           {"creator_and_license", Tone3000::credit(tone)},
-           {"gear", tone["gear"]},
-           {"format", format},
-           {"description", tone["description"].toString().substring(0, 800)},
-           {"downloads", tone["downloads_count"]},
-           {"favorites", tone["favorites_count"]},
-           {"files", files},
-           {"usable_as",
-            format == "ir"            ? "the cabinet"
-            : format != "nam"         ? "nothing: this amp only loads NAM and IR files"
-            : canBeTheAmp(tone["gear"].toString())
-                ? "the amp"
-                : "nothing: there's one neural slot and it's the amp, so use a "
-                  "built-in pedal instead"}}));
+  auto result = json::object(
+      {{"id", toneId},
+       {"title", tone["title"]},
+       {"creator_and_license", Tone3000::credit(tone)},
+       {"gear", tone["gear"]},
+       {"format", format},
+       {"description", tone["description"].toString().substring(0, 800)},
+       {"downloads", tone["downloads_count"]},
+       {"favorites", tone["favorites_count"]},
+       {"files", files},
+       {"files_total", list.files.size()},
+       {"usable_as",
+        format == "ir"            ? "the cabinet"
+        : format != "nam"         ? "nothing: this amp only loads NAM and IR files"
+        : canBeTheAmp(tone["gear"].toString())
+            ? "the amp"
+            : "nothing: there's one neural slot and it's the amp, so use a "
+              "built-in pedal instead"}});
+  auto *extra = result.getDynamicObject();
+  if (!wanted.isEmpty())
+    extra->setProperty("files_matching", matching);
+  if (skip + files.size() < matching)
+    extra->setProperty("more_files", "Showing " + juce::String(files.size()) + " of " +
+                                         juce::String(matching) +
+                                         ". See the next ones with skip, or narrow them "
+                                         "down with name_contains.");
+  if (!list.complete)
+    extra->setProperty("list_incomplete", "TONE3000 didn't send the whole list, so there "
+                                          "may be more files than these.");
+  return reply(call, result);
 }
 
 ToolBox::Outcome ToolBox::loadCapture(const ToolCall &call) {
@@ -505,12 +611,15 @@ ToolBox::Outcome ToolBox::loadCapture(const ToolCall &call) {
                              "pedal instead and say it's an approximation.");
 
   juce::var model;
-  for (const auto &candidate : json::items(tone3000.listModels(toneId, format, error)))
+  const auto list = tone3000.listModels(toneId, format, error);
+  for (const auto &candidate : list.files)
     if ((juce::int64)candidate["id"] == modelId)
       model = candidate;
   if (!model.isObject())
-    return problem(call, error.isNotEmpty()
-                             ? error
+    return problem(call, error.isNotEmpty() ? error
+                         : !list.complete
+                             ? "TONE3000 didn't send this tone's whole list of files, and "
+                               "that one wasn't in what came. Try again."
                              : "This tone has no file with that id. "
                                "inspect_tone3000_tone lists them.");
 
@@ -532,8 +641,8 @@ ToolBox::Outcome ToolBox::loadCapture(const ToolCall &call) {
     if (loadError.isNotEmpty())
       return problem(call, "It wouldn't load: " + loadError);
     // A capture with a cab in it plays through no second cab, and vice versa.
-    const bool cabOn = !includesCab(gear);
-    amp.setParameter(params::cabOn, cabOn ? 1.0f : 0.0f);
+    const bool cabOn = !hasOwnCabinet(amp.getModel()).value_or(includesCab(gear));
+    setCabinetOn(cabOn);
     result.getDynamicObject()->setProperty("cabinet_on", cabOn);
     note("loaded amp: " + Tone3000::credit(tone) +
              (cabOn ? ", through the cabinet" : ", cabinet off since it has its own"),
@@ -542,9 +651,9 @@ ToolBox::Outcome ToolBox::loadCapture(const ToolCall &call) {
     const auto loadError = amp.loadIr(file.getFullPathName());
     if (loadError.isNotEmpty())
       return problem(call, "It wouldn't load: " + loadError);
-    amp.setParameter(params::cabOn, 1.0f);
-    result.getDynamicObject()->setProperty("cabinet_on", true);
-    note("loaded cabinet: " + Tone3000::credit(tone), links);
+    note("loaded cabinet: " + Tone3000::credit(tone) +
+             (switchCabinetForNewIr(result) ? "" : ", left off since the capture has its own"),
+         links);
   }
   if (const auto output = findParameter(params::output))
     result.getDynamicObject()->setProperty("output_db", output->value);
@@ -575,6 +684,7 @@ juce::String describeAmpState(AmpControl &amp) {
   juce::String state;
   state << "[The amp right now. Model: "
         << (model.name.isNotEmpty() ? model.name : juce::String("none"))
+        << (hasOwnCabinet(model).value_or(false) ? " (has its own cabinet)" : "")
         << ". Cabinet IR: " << ir.name << ". Controls away from their default: ";
   juce::StringArray changed;
   for (const auto &p : amp.getParameters())

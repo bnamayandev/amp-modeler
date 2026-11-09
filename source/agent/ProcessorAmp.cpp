@@ -1,6 +1,7 @@
 #include "ProcessorAmp.h"
 
 #include "ToneMeter.h"
+#include "dsp/Loudness.h"
 #include "state/Parameters.h"
 
 #include <juce_events/juce_events.h>
@@ -99,7 +100,8 @@ float ProcessorAmp::valueAtPosition(const juce::String &id, float position) cons
 ToneReading ProcessorAmp::measureTone() {
   // The audio thread reads these same atomics; nothing here touches its chain.
   return evil::agent::measureTone(params::Snapshot(state).read(),
-                                  models.getRequestedSource(), cab.getSource());
+                                  models.getRequestedSource(), cab.getSource(),
+                                  models.isMatchingLevels());
 }
 
 LoadedCapture ProcessorAmp::getModel() const {
@@ -109,13 +111,16 @@ LoadedCapture ProcessorAmp::getModel() const {
     return capture;
   capture.name = status.info.name;
   capture.source = status.info.source;
-  if (status.info.hasLoudness)
+  capture.gearType = status.info.gearType;
+  if (models.isMatchingLevels() && status.info.hasLevel)
+    capture.loudnessDb = loudness::targetDb; // every capture plays at the same level
+  else if (status.info.hasLoudness)
     capture.loudnessDb = status.info.loudnessDb;
   return capture;
 }
 
 LoadedCapture ProcessorAmp::getIr() const {
-  return {cab.getDisplayName(), cab.getSource(), {}};
+  return {cab.getDisplayName(), cab.getSource(), {}, {}};
 }
 
 juce::String ProcessorAmp::loadModel(const juce::String &source) {

@@ -1,5 +1,7 @@
 #include "ToneMeter.h"
 
+#include "dsp/Loudness.h"
+
 #include <juce_dsp/juce_dsp.h>
 
 #include <numbers>
@@ -8,35 +10,12 @@ namespace evil::agent {
 namespace {
 constexpr double rate = 48000.0;
 constexpr int blockSize = 256;
-constexpr int chordSamples = (int)(1.2 * rate), noteSamples = (int)(0.4 * rate);
+constexpr int noteSamples = (int)(0.4 * rate);
 constexpr int settleSamples = (int)(0.1 * rate);
 constexpr double noteHz = 220.0;
 // A guitar's chord peaks at about this at +12 dBu full scale. The hard chord and
 // note are 12 dB above the gentle ones.
 constexpr float gentlePeak = 0.05f, hardPeak = 0.2f, gentleNote = 0.0125f, hardNote = 0.05f;
-
-/** An open chord, every string a decaying stack of harmonics, its top end falling
-    away faster: not a real guitar, but with its balance. The same every time. */
-std::vector<float> chord(float peak) {
-  std::vector<float> out((size_t)chordSamples, 0.0f);
-  for (const double hz : {82.41, 123.47, 164.81, 207.65, 246.94, 329.63}) {
-    for (int k = 1; k <= 20 && hz * k < 12000.0; ++k) {
-      const double partial = hz * k, amplitude = 1.0 / std::pow((double)k, 1.1);
-      const double decay = 0.8 + 0.5 * k, phase = 0.7 * k * hz;
-      for (int i = 0; i < chordSamples; ++i) {
-        const double t = i / rate;
-        out[(size_t)i] += (float)(amplitude * std::exp(-decay * t) *
-                                  std::sin(2.0 * std::numbers::pi * partial * t + phase));
-      }
-    }
-  }
-  float highest = 0.0f;
-  for (const auto x : out)
-    highest = juce::jmax(highest, std::abs(x));
-  for (auto &x : out)
-    x *= peak / highest;
-  return out;
-}
 
 float rmsDb(const float *data, int n) {
   double sum = 0.0;
@@ -72,9 +51,10 @@ struct Result {
 };
 
 Result play(const SignalChain::Settings &settings, const juce::String &modelSource,
-            const juce::String &irSource) {
+            const juce::String &irSource, bool matchLevels, const std::vector<float> &chord) {
   Result result;
   auto chain = std::make_unique<SignalChain>();
+  chain->setMatchingLevels(matchLevels); // before loading, so each is measured once
   if (irSource.isNotEmpty() && !chain->getCab().load(irSource, result.error))
     return result;
   if (modelSource.isNotEmpty() &&
@@ -98,8 +78,15 @@ Result play(const SignalChain::Settings &settings, const juce::String &modelSour
     return note;
   };
 
-  const auto gentleChord = run(chord(gentlePeak));
-  const auto hardChord = run(chord(hardPeak));
+  const auto picked = [&chord](float peak) {
+    auto scaled = chord;
+    for (auto &x : scaled)
+      x *= peak;
+    return scaled;
+  };
+
+  const auto gentleChord = run(picked(gentlePeak));
+  const auto hardChord = run(picked(hardPeak));
   const auto gentleTone = run(steady(gentleNote));
   const auto hardTone = run(steady(hardNote));
 
@@ -134,21 +121,24 @@ Result play(const SignalChain::Settings &settings, const juce::String &modelSour
 } // namespace
 
 ToneReading measureTone(SignalChain::Settings settings, const juce::String &modelSource,
-                        const juce::String &irSource) {
+                        const juce::String &irSource, bool matchLevels) {
   settings.phaser.on = settings.flanger.on = settings.chorus.on = settings.tremolo.on =
       settings.delay.on = settings.reverb.on = false;
   settings.transposeSemitones = 0;
 
+  // Only the pedals and EQ come out. Input and output stay, as they aren't what's
+  // being measured: a capture's level trim would otherwise read as every band
+  // dropping, and turning the input down as the mids being scooped.
   auto alone = settings;
   alone.wah.on = alone.compressor.on = alone.fuzz.on = alone.overdrive.on =
       alone.distortion.on = alone.boost.on = false;
   alone.eqDb = {};
-  alone.inputDb = 0.0f;
-  alone.outputDb = 0.0f;
 
+  static_assert((int)loudness::rate == (int)rate);
+  const auto &chord = loudness::openChord();
   ToneReading reading;
-  const auto asSet = play(settings, modelSource, irSource);
-  const auto bare = play(alone, modelSource, irSource);
+  const auto asSet = play(settings, modelSource, irSource, matchLevels, chord);
+  const auto bare = play(alone, modelSource, irSource, matchLevels, chord);
   reading.error = asSet.error.isNotEmpty() ? asSet.error : bare.error;
   if (reading.error.isNotEmpty())
     return reading;
